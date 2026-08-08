@@ -185,8 +185,7 @@ export function registerSessionTools(ctx: ServerContext): void {
     alwaysEnabled: true,
     targetIndependent: true,
     annotations: { readOnlyHint: true },
-    description:
-      "Report the active target and all legacy managed session records without changing them.",
+    description: "Report the active target and every managed session record without changing them.",
     inputSchema: {},
     handler: async () => {
       const sessions = await listSessions({ currentKey: ctx.currentSessionKey });

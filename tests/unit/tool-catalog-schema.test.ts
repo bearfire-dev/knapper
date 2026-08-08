@@ -112,6 +112,7 @@ describe("static tool surface", () => {
       name: "browser_example",
       toolset: "ui",
       description: "Example browser operation.",
+      inputSchema: { target: z.string().describe("Element to click.") },
       handler: async () => "ok",
     });
     const configs = new Map<string, Record<string, unknown>>();
@@ -119,7 +120,7 @@ describe("static tool surface", () => {
 
     expect(configs.has("browser_example")).toBe(true);
     const inputSchema = configs.get("browser_example")?.inputSchema as Record<string, unknown>;
-    expect(inputSchema).not.toHaveProperty("workspaceHandle");
+    expect(Object.keys(inputSchema)).toEqual(["target"]);
   });
 });
 

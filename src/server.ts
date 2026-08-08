@@ -188,7 +188,13 @@ export async function createServerContext(config: Config): Promise<ServerContext
     config.telemetryNetwork,
   );
   const browserProxy = new BrowserProxy(config, router, logger.child("browser"));
-  const activity = new ActivityGuard({ idleTimeoutMs: config.activityIdleMs });
+  const activity = new ActivityGuard({
+    idleTimeoutMs: config.activityIdleMs,
+    onError: (error) =>
+      logger.warn("activity ownership update failed", {
+        error: error instanceof Error ? error.message : String(error),
+      }),
+  });
   let ctx!: ServerContext;
   const managedSessionOpen = async (): Promise<boolean> => {
     const descriptors = await listDescriptors();

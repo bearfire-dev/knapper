@@ -228,6 +228,38 @@ const liveHome = await createLiveHome("knapper-e2e-");
 const client = new McpClient(["--toolsets", "all"], liveHome.env);
 try {
   const init = await client.initialize();
+  await check("a session opened after startup is diagnosed as isolated", async () => {
+    const dynamic = new McpClient(["--toolsets", "all"], liveHome.env);
+    try {
+      await dynamic.initialize();
+      const opened = await dynamic.call("obsidian_session_open", {
+        target: "isolated",
+        label: "e2e-scratch",
+        ...(process.env.PLUGIN_SOURCE_DIR
+          ? { pluginSourceDir: process.env.PLUGIN_SOURCE_DIR }
+          : {}),
+        ...(process.env.PLUGIN_ID ? { pluginId: process.env.PLUGIN_ID } : {}),
+      });
+      assert(!opened.isError, `session open failed: ${opened.text}`);
+
+      const doctor = await dynamic.call("obsidian_doctor");
+      assert(!doctor.isError, `doctor returned an error: ${doctor.text}`);
+      assert(
+        /Active target: isolated/.test(doctor.text),
+        "doctor did not report an isolated target",
+      );
+      assert(doctor.json?.profile?.kind === "private", "doctor did not report a private profile");
+
+      const refused = await dynamic.call("obsidian_create_vault", {
+        path: join(liveHome.home, "should-refuse-vault"),
+      });
+      assert(refused.isError, "isolated session accepted a second vault");
+      assert(/isolated session/i.test(refused.text), `unexpected refusal: ${refused.text}`);
+    } finally {
+      await dynamic.call("obsidian_session_release").catch(() => undefined);
+      dynamic.close();
+    }
+  });
   const isolated = await createDisposableWorkspace(client, root, {
     home: liveHome.home,
     label: "e2e-scratch",
@@ -1246,9 +1278,12 @@ try {
 
     await check("the server exits promptly when the client closes stdin", async () => {
       const short = new McpClient(["--toolsets", "core", "--vault", VAULT]);
-      await short.initialize();
-      await short.ok("obsidian_status");
-      short.close();
+      try {
+        await short.initialize();
+        await short.ok("obsidian_status");
+      } finally {
+        short.close();
+      }
       const exited = await waitFor(() => short.exited, {
         what: "the process to exit after stdin close",
         timeoutMs: 12000,
