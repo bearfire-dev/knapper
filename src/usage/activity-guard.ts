@@ -119,7 +119,10 @@ export class ActivityGuard {
   private startHeartbeat(): void {
     if (this.heartbeatTimer !== undefined) clearInterval(this.heartbeatTimer);
     const intervalMs = Math.max(1_000, Math.floor(this.opts.idleTimeoutMs / 3));
-    this.heartbeatTimer = setInterval(() => void this.heartbeat(), intervalMs);
+    this.heartbeatTimer = setInterval(
+      () => void this.heartbeat().catch(() => undefined),
+      intervalMs,
+    );
     this.heartbeatTimer.unref();
   }
 

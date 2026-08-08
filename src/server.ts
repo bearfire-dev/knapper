@@ -197,6 +197,7 @@ export async function createServerContext(config: Config): Promise<ServerContext
   };
   const statusOnlyTools = new Set([
     "obsidian_status",
+    "obsidian_doctor",
     "obsidian_session_status",
     "obsidian_capabilities",
     "obsidian_toolsets",

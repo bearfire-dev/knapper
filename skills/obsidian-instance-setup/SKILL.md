@@ -32,7 +32,7 @@ obsidian_session_release
 obsidian_session_reset
 ```
 
-`release` stops the app and retains the scratch vault. `reset` replaces the private
+`release` drops the agent claim and keeps the app ready for reuse. `reset` replaces the private
 target and moves verified old roots to recoverable Knapper trash. Knapper never
 hard-deletes a managed root.
 

@@ -35,8 +35,9 @@ alwaysApply: false
 
 - Use a scratch dev vault for `obsidian_reset_state` and destructive tests.
 - Keep the private profile and `XDG_RUNTIME_DIR` isolation intact.
-- Use `obsidian_session_release` after testing. Knapper moves verified roots to
-  recoverable trash and never hard-deletes them.
+- Use `obsidian_session_release` after testing. It releases the agent claim and
+  keeps the private app ready for reuse. Reset moves verified roots to recoverable
+  trash and never hard-deletes them.
 - Run `obsidian_doctor` when transports fail; quit Obsidian fully before expecting CDP after adding `--remote-debugging-port`.
 
 ## Tool discovery

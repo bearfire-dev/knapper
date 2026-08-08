@@ -57,6 +57,50 @@ describe("ToolRegistry runtime toolsets", () => {
     expect(order).toEqual(["start:first", "end:first", "start:second", "end:second"]);
   });
 
+  it("keeps finalization inside the FIFO lane", async () => {
+    const callbacks = new Map<string, ToolCallback>();
+    const order: string[] = [];
+    let releaseAfter!: () => void;
+    const afterBlocked = new Promise<void>((resolve) => {
+      releaseAfter = resolve;
+    });
+    const registry = new ToolRegistry(new Set(["core"]), createLogger("error"), undefined, {
+      audit: false,
+      beforeInvoke: async (_definition, args) => void order.push(`before:${String(args.name)}`),
+      afterInvoke: async (_definition, args) => {
+        order.push(`after:${String(args.name)}`);
+        if (args.name === "first") await afterBlocked;
+      },
+    });
+    registry.add({
+      name: "finalized_call",
+      toolset: "core",
+      description: "Verify that finalization completes before the next queued call starts.",
+      handler: async (args) => {
+        order.push(`handler:${String(args.name)}`);
+        return "ok";
+      },
+    });
+    registry.bind(fakeServer(callbacks));
+
+    const first = callbacks.get("finalized_call")?.({ name: "first" });
+    await vi.waitFor(() => expect(order).toContain("after:first"));
+    const second = callbacks.get("finalized_call")?.({ name: "second" });
+    await Promise.resolve();
+    expect(order).not.toContain("before:second");
+
+    releaseAfter();
+    await Promise.all([first, second]);
+    expect(order).toEqual([
+      "before:first",
+      "handler:first",
+      "after:first",
+      "before:second",
+      "handler:second",
+      "after:second",
+    ]);
+  });
+
   it("does not register disabled startup-only toolsets", () => {
     const callbacks = new Map<string, ToolCallback>();
     const registry = new ToolRegistry(new Set(["core"]), createLogger("error"));

@@ -30,7 +30,8 @@ it routes tools. The result returns `visualIdentity.state` and
 `visualIdentity.warnings`. A session does not become ready when the required
 banner, title, icon, or desktop class is missing.
 
-Call `obsidian_session_release` to stop the session and retain its scratch vault.
+Call `obsidian_session_release` to release the active claim. The private app and
+scratch vault stay ready for the next agent.
 Call `obsidian_session_reset` to replace it. Cleanup checks path, symlink, device,
 and inode ownership. It moves the root into `KNAP_HOME/trash`. It never
 hard-deletes the root.

@@ -376,10 +376,8 @@ export class ToolRegistry {
           let auditOutcome: "success" | "error" = "success";
           let auditError: AuditErrorEnvelope | undefined;
           let completedOutcome: ToolOutcome | UobError | undefined;
-          // The shared router, capture, telemetry delegate, and configuration all
-          // target one app. Keep the exclusive grant through the complete handler.
-          try {
-            return await this.lock.run("exclusive", def.name, async () => {
+          return this.lock.run("exclusive", def.name, async () => {
+            try {
               // Read the telemetry cursor after admission, not before: a call that
               // waited in the queue would otherwise report every log line produced
               // by the calls it was queued behind.
@@ -414,45 +412,45 @@ export class ToolRegistry {
                 };
               }
               return result;
-            });
-          } catch (e) {
-            const err = toUobError(e);
-            completedOutcome = err;
-            auditOutcome = "error";
-            auditError = errorEnvelope(err);
-            this.logger.warn("tool failed", {
-              tool: def.name,
-              code: err.code,
-              ms: Date.now() - started,
-            });
-            return errorResult(err);
-          } finally {
-            if (admitted && completedOutcome !== undefined) {
-              try {
-                await this.hooks.afterInvoke?.(def, callArgs, requestContext, completedOutcome);
-              } catch (hookError) {
-                this.logger.warn("afterInvoke hook failed", {
-                  tool: def.name,
-                  error: hookError instanceof Error ? hookError.name : "UnknownHookError",
-                });
+            } catch (e) {
+              const err = toUobError(e);
+              completedOutcome = err;
+              auditOutcome = "error";
+              auditError = errorEnvelope(err);
+              this.logger.warn("tool failed", {
+                tool: def.name,
+                code: err.code,
+                ms: Date.now() - started,
+              });
+              return errorResult(err);
+            } finally {
+              if (completedOutcome !== undefined) {
+                try {
+                  await this.hooks.afterInvoke?.(def, callArgs, requestContext, completedOutcome);
+                } catch (hookError) {
+                  this.logger.warn("afterInvoke hook failed", {
+                    tool: def.name,
+                    error: hookError instanceof Error ? hookError.name : "UnknownHookError",
+                  });
+                }
+              }
+              if (this.audit !== false) {
+                this.queueAudit(
+                  toolAuditEvent({
+                    timestamp,
+                    requestId: callRequestId,
+                    tool: def.name,
+                    durationMs: Date.now() - started,
+                    queueMs: admitted ? queueMs : Date.now() - started,
+                    outcome: auditOutcome,
+                    args: callArgs,
+                    ...(auditContext ? { context: auditContext } : {}),
+                    ...(auditError ? { error: auditError } : {}),
+                  }),
+                );
               }
             }
-            if (this.audit !== false) {
-              this.queueAudit(
-                toolAuditEvent({
-                  timestamp,
-                  requestId: callRequestId,
-                  tool: def.name,
-                  durationMs: Date.now() - started,
-                  queueMs: admitted ? queueMs : Date.now() - started,
-                  outcome: auditOutcome,
-                  args: callArgs,
-                  ...(auditContext ? { context: auditContext } : {}),
-                  ...(auditError ? { error: auditError } : {}),
-                }),
-              );
-            }
-          }
+          });
         }) as never,
       );
     }

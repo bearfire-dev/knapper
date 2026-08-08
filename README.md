@@ -250,8 +250,8 @@ tools use that session automatically. They do not accept caller-owned session
 identifiers.
 
 Call `obsidian_session_status` to inspect the session. Call `obsidian_session_release`
-to stop it and keep its scratch vault. Call `obsidian_session_reset` to stop the
-session and create a new private target. Knapper moves verified private roots to
+to release your claim while the private app stays ready for reuse. Call
+`obsidian_session_reset` to stop the session and create a new private target. Knapper moves verified private roots to
 recoverable trash when cleanup requires removal. It never hard-deletes them.
 
 Only one operation runs at a time. A second Knapper process receives `KNAPPER_BUSY`.
