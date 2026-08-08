@@ -266,26 +266,26 @@ Knapper keeps the profile and `XDG_RUNTIME_DIR` private for managed sessions.
 
 Set options via **environment variables** (and a subset via CLI flags). See [docs/configuration.md](docs/configuration.md) for examples.
 
-| Setting             | Env var                  | CLI flag         | Default                        |
-| ------------------- | ------------------------ | ---------------- | ------------------------------ |
-| CDP URL             | `OBSIDIAN_CDP_URL`       | `--cdp-url`      | `http://127.0.0.1:9222`        |
-| Obsidian binary     | `OBSIDIAN_BIN`           | `--obsidian-bin` | OS default                     |
-| Default vault       | `OBSIDIAN_VAULT`         | `--vault`, `-v`  | (active / unset)               |
-| Toolsets            | `KNAP_TOOLSETS`          | `--toolsets`     | `all`                          |
-| knapper's disk root | `KNAP_HOME`              | —                | `~/.knapper_mcp`               |
-| Log level           | `KNAP_LOG_LEVEL`         | `--log-level`    | `info`                         |
-| Telemetry buffer    | `KNAP_TELEMETRY_BUFFER`  | —                | `2000`                         |
-| Network capture     | `KNAP_TELEMETRY_NETWORK` | —                | `false`                        |
-| CDP reconnect delay | `KNAP_RECONNECT_MS`      | —                | `2000`                         |
-| Screenshot dir      | `KNAP_SCREENSHOT_DIR`    | `--output-dir`   | `./.knapper`                   |
-| CLI timeout         | `KNAP_CLI_TIMEOUT_MS`    | —                | `15000`                        |
-| Session cleanup     | `KNAP_IDLE_TIMEOUT_MS`   | —                | `86400000` (24 hours)          |
-| Activity ownership  | `KNAP_ACTIVITY_IDLE_MS`  | —                | `300000` (5 minutes)           |
-| Command transport   | `KNAP_COMMAND_TRANSPORT` | —                | `auto` (`cli` or `playwright`) |
-| Window match        | `OBSIDIAN_TARGET_MATCH`  | `--target-match` | (unset)                        |
-| Transport           | `MCP_TRANSPORT`          | `--transport`    | `stdio`                        |
-| HTTP port           | `MCP_PORT`               | `--port`         | `9223`                         |
-| HTTP host           | `MCP_HOST`               | `--host`         | `127.0.0.1`                    |
+| Setting             | Env var                  | CLI flag         | Default                                         |
+| ------------------- | ------------------------ | ---------------- | ----------------------------------------------- |
+| CDP URL             | `OBSIDIAN_CDP_URL`       | `--cdp-url`      | `http://127.0.0.1:9222`                         |
+| Obsidian binary     | `OBSIDIAN_BIN`           | `--obsidian-bin` | OS default                                      |
+| Default vault       | `OBSIDIAN_VAULT`         | `--vault`, `-v`  | (active / unset)                                |
+| Toolsets            | `KNAP_TOOLSETS`          | `--toolsets`     | core, UI, telemetry, plugin development, editor |
+| knapper's disk root | `KNAP_HOME`              | —                | `~/.knapper_mcp`                                |
+| Log level           | `KNAP_LOG_LEVEL`         | `--log-level`    | `info`                                          |
+| Telemetry buffer    | `KNAP_TELEMETRY_BUFFER`  | —                | `2000`                                          |
+| Network capture     | `KNAP_TELEMETRY_NETWORK` | —                | `false`                                         |
+| CDP reconnect delay | `KNAP_RECONNECT_MS`      | —                | `2000`                                          |
+| Screenshot dir      | `KNAP_SCREENSHOT_DIR`    | `--output-dir`   | `./.knapper`                                    |
+| CLI timeout         | `KNAP_CLI_TIMEOUT_MS`    | —                | `15000`                                         |
+| Session cleanup     | `KNAP_IDLE_TIMEOUT_MS`   | —                | `86400000` (24 hours)                           |
+| Activity ownership  | `KNAP_ACTIVITY_IDLE_MS`  | —                | `300000` (5 minutes)                            |
+| Command transport   | `KNAP_COMMAND_TRANSPORT` | —                | `auto` (`cli` or `playwright`)                  |
+| Window match        | `OBSIDIAN_TARGET_MATCH`  | `--target-match` | (unset)                                         |
+| Transport           | `MCP_TRANSPORT`          | `--transport`    | `stdio`                                         |
+| HTTP port           | `MCP_PORT`               | `--port`         | `9223`                                          |
+| HTTP host           | `MCP_HOST`               | `--host`         | `127.0.0.1`                                     |
 
 `LOG_LEVEL`, `RECONNECT_MS`, and `SCREENSHOT_DIR` are also accepted as aliases; the `KNAP_`-prefixed name wins when both are set.
 

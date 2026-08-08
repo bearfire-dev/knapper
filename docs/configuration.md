@@ -38,10 +38,10 @@ hard-deletes the root.
 
 ## Tool surface
 
-| Environment variable  | CLI flag       | Default      | Purpose                       |
-| --------------------- | -------------- | ------------ | ----------------------------- |
-| `KNAP_TOOLSETS`       | `--toolsets`   | `all`        | Startup toolset selection     |
-| `KNAP_SCREENSHOT_DIR` | `--output-dir` | `./.knapper` | Default-profile artifact root |
+| Environment variable  | CLI flag       | Default                                         | Purpose                       |
+| --------------------- | -------------- | ----------------------------------------------- | ----------------------------- |
+| `KNAP_TOOLSETS`       | `--toolsets`   | core, UI, telemetry, plugin development, editor | Startup toolset selection     |
+| `KNAP_SCREENSHOT_DIR` | `--output-dir` | `./.knapper`                                    | Default-profile artifact root |
 
 Knapper publishes the complete tool surface during MCP initialization. The list
 does not change during a connection. Do not change the tool list after startup.

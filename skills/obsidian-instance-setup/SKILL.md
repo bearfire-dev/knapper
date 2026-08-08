@@ -45,9 +45,8 @@ only after it verifies process death or an expired activity record.
 
 ## Default profile
 
-Call `obsidian_session_open` without a private plugin target only for a
-user-approved default-profile task. Existing vault access still requires terminal
-authorization.
+Call `obsidian_session_open` with `target="default"` only for a user-approved
+default-profile task. Existing vault access still requires terminal authorization.
 
 | State                  | Meaning                                  | Action                            |
 | ---------------------- | ---------------------------------------- | --------------------------------- |
@@ -78,9 +77,11 @@ does not change during a connection. Do not change the tool list after startup.
 
 ## Safety limits
 
-Private sessions use a private profile and `XDG_RUNTIME_DIR` for the CLI socket.
-Restart operations remain scoped to the managed process. Knapper never uses the
-default profile as a fallback.
+Private sessions use a private profile. On Linux, a private `XDG_RUNTIME_DIR` also
+isolates the CLI socket per session. macOS uses a shared socket, and Windows has no
+per-session socket input. Treat native CLI routing outside Linux as shared or
+unavailable. Restart operations remain scoped to the managed process. Knapper
+never uses the default profile as a fallback.
 
 ## Related skills
 
