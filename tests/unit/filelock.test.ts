@@ -7,7 +7,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, stat, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { hostname } from "node:os";
 import { join } from "node:path";
@@ -113,7 +113,7 @@ describe("withFileLock", () => {
     expect(await withFileLock(lock, async () => "recovered", { timeoutMs: 500 })).toBe("recovered");
   });
 
-  it("breaks a lock that is merely too old, as a backstop", async () => {
+  it("does not break a live same-host lock because its record is old", async () => {
     await writeFile(
       lock,
       JSON.stringify({
@@ -123,14 +123,28 @@ describe("withFileLock", () => {
       }),
       "utf8",
     );
+    await expect(
+      withFileLock(lock, async () => "never", { staleMs: 1000, timeoutMs: 100, retryMs: 10 }),
+    ).rejects.toThrow(/Timed out/);
+  });
+
+  it.each([
+    ["unreadable", "{truncated"],
+    ["incomplete", JSON.stringify({ pid: process.pid })],
+  ])("does not break a fresh %s lock", async (_kind, contents) => {
+    await writeFile(lock, contents, "utf8");
+    await expect(
+      withFileLock(lock, async () => "never", { staleMs: 1000, timeoutMs: 100, retryMs: 10 }),
+    ).rejects.toThrow(/Timed out/);
+  });
+
+  it("breaks an unreadable lock only after its file mtime is stale", async () => {
+    await writeFile(lock, "{truncated", "utf8");
+    const staleAt = new Date(Date.now() - 120_000);
+    await utimes(lock, staleAt, staleAt);
     expect(
       await withFileLock(lock, async () => "recovered", { staleMs: 1000, timeoutMs: 500 }),
     ).toBe("recovered");
-  });
-
-  it("breaks an unreadable lock, which means a crash mid-write", async () => {
-    await writeFile(lock, "{truncated", "utf8");
-    expect(await withFileLock(lock, async () => "recovered", { timeoutMs: 500 })).toBe("recovered");
   });
 
   it("never breaks a lock held by another host", async () => {
