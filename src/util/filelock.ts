@@ -17,7 +17,7 @@
  * healthy long operation or leave a dead one's lock forever.
  */
 
-import { mkdir, open, readFile, rm } from "node:fs/promises";
+import { mkdir, open, readFile, rm, stat } from "node:fs/promises";
 import { dirname } from "node:path";
 import { hostname } from "node:os";
 import { UobError } from "./errors.js";
@@ -25,7 +25,7 @@ import { UobError } from "./errors.js";
 export interface FileLockOptions {
   /** How long to wait for a contended lock before giving up. */
   timeoutMs?: number;
-  /** How old a lock may get before a dead owner's file is broken. */
+  /** How old an unverifiable lock may get before its file is broken. */
   staleMs?: number;
   /** Poll interval while waiting. */
   retryMs?: number;
@@ -38,7 +38,7 @@ interface LockRecord {
 }
 
 const DEFAULT_TIMEOUT_MS = 30_000;
-/** Matches CallLock's queue timeout: the longest a legitimate hold should last. */
+/** Backstop for incomplete records whose process owner cannot be verified. */
 const DEFAULT_STALE_MS = 60_000;
 const DEFAULT_RETRY_MS = 50;
 
@@ -58,24 +58,35 @@ function isAlive(pid: number): boolean {
 /**
  * Should an existing lock file be broken?
  *
- * Only when its owner is gone, or it is old enough that no legitimate hold could
- * still be running. A lock held by another host is never broken: we cannot check
- * liveness there, and guessing would defeat the point.
+ * Only when its local owner is gone, or an unverifiable record is old enough to
+ * prove that its writer did not finish. A live local PID and another host are
+ * never overridden by wall-clock age.
  */
 async function isStale(path: string, staleMs: number): Promise<boolean> {
-  let record: LockRecord;
+  const oldByMtime = async (): Promise<boolean> => {
+    try {
+      return Date.now() - (await stat(path)).mtimeMs > staleMs;
+    } catch (error) {
+      return (error as NodeJS.ErrnoException).code === "ENOENT";
+    }
+  };
+
+  let record: Partial<LockRecord>;
   try {
-    record = JSON.parse(await readFile(path, "utf8")) as LockRecord;
+    const parsed = JSON.parse(await readFile(path, "utf8")) as unknown;
+    if (typeof parsed !== "object" || parsed === null) return oldByMtime();
+    record = parsed as Partial<LockRecord>;
   } catch {
-    // Unreadable or truncated: a crash mid-write. Nothing can be learned from it.
-    return true;
+    // A contender can observe the file between exclusive creation and the record
+    // write. Only an old incomplete file is evidence of a crashed holder.
+    return oldByMtime();
   }
 
-  if (record.hostname !== hostname()) return false;
-  if (typeof record.pid === "number" && !isAlive(record.pid)) return true;
+  if (typeof record.hostname === "string" && record.hostname !== hostname()) return false;
+  if (typeof record.pid === "number") return !isAlive(record.pid);
 
-  const age = Date.now() - Date.parse(record.acquiredAt);
-  return Number.isFinite(age) && age > staleMs;
+  const acquiredAt = Date.parse(record.acquiredAt ?? "");
+  return Number.isFinite(acquiredAt) ? Date.now() - acquiredAt > staleMs : oldByMtime();
 }
 
 /**
