@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import type { McpServer, RegisteredTool } from "@modelcontextprotocol/server";
+import type { McpServer } from "@modelcontextprotocol/server";
 import { ToolRegistry } from "../../src/tools/registry.js";
 import { createLogger } from "../../src/util/logger.js";
 import type { ToolAuditEvent } from "../../src/audit/types.js";
@@ -13,103 +13,71 @@ type ToolCallback = (
   isError?: boolean;
 }>;
 
-function fakeServer(
-  handles: Map<string, RegisteredTool>,
-  callbacks?: Map<string, ToolCallback>,
-): McpServer {
+function fakeServer(callbacks: Map<string, ToolCallback>): McpServer {
   return {
     registerTool: vi.fn((name: string, _config: unknown, callback: ToolCallback) => {
-      const handle = {
-        enabled: true,
-        enable() {
-          this.enabled = true;
-        },
-        disable() {
-          this.enabled = false;
-        },
-      } as RegisteredTool;
-      handles.set(name, handle);
-      callbacks?.set(name, callback);
-      return handle;
+      callbacks.set(name, callback);
+      return {} as never;
     }),
   } as unknown as McpServer;
 }
 
 describe("ToolRegistry runtime toolsets", () => {
-  it("keeps workspace binding exclusive through a read-only handler", async () => {
-    const handles = new Map<string, RegisteredTool>();
-    const callbacks = new Map<string, ToolCallback>();
+  it("serializes every handler through one FIFO lane", async () => {
+    const handles = new Map<string, ToolCallback>();
     const order: string[] = [];
     let releaseFirst!: () => void;
     const firstBlocked = new Promise<void>((resolve) => {
       releaseFirst = resolve;
     });
-    const registry = new ToolRegistry(
-      new Set(["core"]),
-      createLogger("error"),
-      4,
-      undefined,
-      undefined,
-      undefined,
-      {
-        audit: false,
-        beforeInvoke: async (_definition, args) => {
-          order.push(`bind:${String(args.workspaceHandle)}`);
-        },
-      },
-    );
+    const registry = new ToolRegistry(new Set(["core"]), createLogger("error"), undefined, {
+      audit: false,
+      beforeInvoke: async () => void 0,
+    });
     registry.add({
       name: "workspace_read",
       toolset: "core",
       description: "Read one workspace through the shared runtime.",
       annotations: { readOnlyHint: true },
       handler: async (args) => {
-        order.push(`start:${String(args.workspaceHandle)}`);
-        if (args.workspaceHandle === "first") await firstBlocked;
-        order.push(`end:${String(args.workspaceHandle)}`);
+        order.push(`start:${String(args.name)}`);
+        if (args.name === "first") await firstBlocked;
+        order.push(`end:${String(args.name)}`);
         return "ok";
       },
     });
-    registry.bind(fakeServer(handles, callbacks));
+    registry.bind(fakeServer(handles));
 
-    const first = callbacks.get("workspace_read")?.({ workspaceHandle: "first" });
+    const first = handles.get("workspace_read")?.({ name: "first" });
     await vi.waitFor(() => expect(order).toContain("start:first"));
-    const second = callbacks.get("workspace_read")?.({ workspaceHandle: "second" });
+    const second = handles.get("workspace_read")?.({ name: "second" });
 
     releaseFirst();
     await Promise.all([first, second]);
-    expect(order).toEqual([
-      "bind:first",
-      "start:first",
-      "end:first",
-      "bind:second",
-      "start:second",
-      "end:second",
-    ]);
+    expect(order).toEqual(["start:first", "end:first", "start:second", "end:second"]);
   });
 
-  it("retains disabled definitions and enables them through SDK handles", () => {
-    const handles = new Map<string, RegisteredTool>();
-    const registry = new ToolRegistry(new Set(["core"]), createLogger("error"), 2);
+  it("does not register disabled startup-only toolsets", () => {
+    const callbacks = new Map<string, ToolCallback>();
+    const registry = new ToolRegistry(new Set(["core"]), createLogger("error"));
     registry.add({
       name: "browser_example",
       toolset: "ui",
       description: "Browser example.",
       handler: async () => "ok",
     });
-    registry.bind(fakeServer(handles));
+    registry.bind(fakeServer(callbacks));
 
-    expect(handles.get("browser_example")?.enabled).toBe(false);
+    expect(callbacks.has("browser_example")).toBe(false);
     expect(registry.toolsetState().disabled).toContain("ui");
 
-    expect(registry.setToolsetEnabled("ui", true)).toEqual(["browser_example"]);
-    expect(handles.get("browser_example")?.enabled).toBe(true);
-    expect(registry.byToolset().ui).toEqual(["browser_example"]);
+    expect(callbacks.has("browser_example")).toBe(false);
+    expect(registry.byToolset().ui).toBeUndefined();
   });
 
   it("keeps control-plane tools enabled with their toolset disabled", () => {
-    const handles = new Map<string, RegisteredTool>();
-    const registry = new ToolRegistry(new Set(["core"]), createLogger("error"), 2);
+    const callbacks = new Map<string, ToolCallback>();
+    const registry = new ToolRegistry(new Set(["core"]), createLogger("error"));
     registry.add({
       name: "obsidian_toolsets",
       toolset: "core",
@@ -117,33 +85,24 @@ describe("ToolRegistry runtime toolsets", () => {
       description: "Manage toolsets.",
       handler: async () => "ok",
     });
-    registry.bind(fakeServer(handles));
+    registry.bind(fakeServer(callbacks));
 
-    registry.setToolsetEnabled("core", false);
-
-    expect(handles.get("obsidian_toolsets")?.enabled).toBe(true);
+    expect(callbacks.has("obsidian_toolsets")).toBe(true);
     expect(registry.names()).toContain("obsidian_toolsets");
   });
 
   it("returns native structured content without duplicate fenced JSON", async () => {
-    const handles = new Map<string, RegisteredTool>();
     const callbacks = new Map<string, ToolCallback>();
-    const registry = new ToolRegistry(
-      new Set(["core"]),
-      createLogger("error"),
-      2,
-      undefined,
-      undefined,
-      undefined,
-      { audit: false },
-    );
+    const registry = new ToolRegistry(new Set(["core"]), createLogger("error"), undefined, {
+      audit: false,
+    });
     registry.add({
       name: "structured_example",
       toolset: "core",
       description: "Structured example.",
       handler: async () => ({ text: "Found 2 items.", json: { count: 2, items: ["a", "b"] } }),
     });
-    registry.bind(fakeServer(handles, callbacks));
+    registry.bind(fakeServer(callbacks));
 
     const result = await callbacks.get("structured_example")?.({}, { requestId: 7 });
 
@@ -153,24 +112,17 @@ describe("ToolRegistry runtime toolsets", () => {
   });
 
   it("keeps plain text for clients that do not read structured content", async () => {
-    const handles = new Map<string, RegisteredTool>();
     const callbacks = new Map<string, ToolCallback>();
-    const registry = new ToolRegistry(
-      new Set(["core"]),
-      createLogger("error"),
-      2,
-      undefined,
-      undefined,
-      undefined,
-      { audit: false },
-    );
+    const registry = new ToolRegistry(new Set(["core"]), createLogger("error"), undefined, {
+      audit: false,
+    });
     registry.add({
       name: "json_only_example",
       toolset: "core",
       description: "JSON-only example.",
       handler: async () => ({ json: [1, 2] }),
     });
-    registry.bind(fakeServer(handles, callbacks));
+    registry.bind(fakeServer(callbacks));
 
     const result = await callbacks.get("json_only_example")?.({});
 
@@ -180,31 +132,20 @@ describe("ToolRegistry runtime toolsets", () => {
   });
 
   it("runs request hooks and emits one redacted audit event", async () => {
-    const handles = new Map<string, RegisteredTool>();
     const callbacks = new Map<string, ToolCallback>();
     const events: ToolAuditEvent[] = [];
     const order: string[] = [];
-    const registry = new ToolRegistry(
-      new Set(["core"]),
-      createLogger("error"),
-      2,
-      undefined,
-      undefined,
-      undefined,
-      {
-        audit: { write: async (event) => void events.push(event) },
-        beforeInvoke: async () => void order.push("before"),
-        contextProvider: async () => ({
-          clientInfo: { name: "codex", version: "1.2.3" },
-          agentHandle: "agent-1",
-          workspaceHandle: "workspace-1",
-          transport: "stdio",
-          protocolVersion: "2025-11-25",
-          traceId: "trace-1",
-          workspaceKind: "vault",
-        }),
-      },
-    );
+    const registry = new ToolRegistry(new Set(["core"]), createLogger("error"), undefined, {
+      audit: { write: async (event) => void events.push(event) },
+      beforeInvoke: async () => void order.push("before"),
+      contextProvider: async () => ({
+        clientInfo: { name: "codex", version: "1.2.3" },
+        transport: "stdio",
+        protocolVersion: "2025-11-25",
+        traceId: "trace-1",
+        workspaceKind: "vault",
+      }),
+    });
     registry.add({
       name: "audited_example",
       toolset: "core",
@@ -214,7 +155,7 @@ describe("ToolRegistry runtime toolsets", () => {
         return "ok";
       },
     });
-    registry.bind(fakeServer(handles, callbacks));
+    registry.bind(fakeServer(callbacks));
 
     await callbacks.get("audited_example")?.(
       { code: "private code", text: "private note", settings: { token: "private" } },
@@ -237,31 +178,47 @@ describe("ToolRegistry runtime toolsets", () => {
     expect(events[0]?.trace_id).toMatch(/^sha256:/);
     expect(events[0]?.client?.name).toMatch(/^sha256:/);
     expect(events[0]?.client?.version).toMatch(/^sha256:/);
-    expect(events[0]?.agent_handle).toMatch(/^sha256:/);
-    expect(events[0]?.workspace_handle).toMatch(/^sha256:/);
     expect(JSON.stringify(events[0])).not.toContain("private");
   });
 
+  it("runs cleanup after a precondition hook fails", async () => {
+    const callbacks = new Map<string, ToolCallback>();
+    const afterInvoke = vi.fn();
+    const registry = new ToolRegistry(new Set(["core"]), createLogger("error"), undefined, {
+      audit: false,
+      beforeInvoke: async () => {
+        throw new Error("missing target");
+      },
+      afterInvoke,
+    });
+    registry.add({
+      name: "precondition_failure",
+      toolset: "core",
+      description: "Fail after admission to verify that activity cleanup still runs.",
+      handler: async () => "unreachable",
+    });
+    registry.bind(fakeServer(callbacks));
+
+    const result = await callbacks.get("precondition_failure")?.({});
+
+    expect(result?.isError).toBe(true);
+    expect(afterInvoke).toHaveBeenCalledOnce();
+    expect(afterInvoke.mock.calls[0]?.[3]).toMatchObject({ code: "INTERNAL" });
+  });
+
   it("does not block tools or build an audit queue behind a stalled write", async () => {
-    const handles = new Map<string, RegisteredTool>();
     const callbacks = new Map<string, ToolCallback>();
     const write = vi.fn(() => new Promise<void>(() => undefined));
-    const registry = new ToolRegistry(
-      new Set(["core"]),
-      createLogger("error"),
-      2,
-      undefined,
-      undefined,
-      undefined,
-      { audit: { write } },
-    );
+    const registry = new ToolRegistry(new Set(["core"]), createLogger("error"), undefined, {
+      audit: { write },
+    });
     registry.add({
       name: "stalled_audit_example",
       toolset: "core",
       description: "Stalled audit example.",
       handler: async () => "ok",
     });
-    registry.bind(fakeServer(handles, callbacks));
+    registry.bind(fakeServer(callbacks));
 
     await callbacks.get("stalled_audit_example")?.({});
     await callbacks.get("stalled_audit_example")?.({});
@@ -270,18 +227,11 @@ describe("ToolRegistry runtime toolsets", () => {
   });
 
   it("emits a redacted error envelope and native error details", async () => {
-    const handles = new Map<string, RegisteredTool>();
     const callbacks = new Map<string, ToolCallback>();
     const events: ToolAuditEvent[] = [];
-    const registry = new ToolRegistry(
-      new Set(["core"]),
-      createLogger("error"),
-      2,
-      undefined,
-      undefined,
-      undefined,
-      { audit: { write: async (event) => void events.push(event) } },
-    );
+    const registry = new ToolRegistry(new Set(["core"]), createLogger("error"), undefined, {
+      audit: { write: async (event) => void events.push(event) },
+    });
     registry.add({
       name: "failed_example",
       toolset: "core",
@@ -290,7 +240,7 @@ describe("ToolRegistry runtime toolsets", () => {
         throw new Error("private typed text");
       },
     });
-    registry.bind(fakeServer(handles, callbacks));
+    registry.bind(fakeServer(callbacks));
 
     const result = await callbacks.get("failed_example")?.({}, { requestId: "request-2" });
 

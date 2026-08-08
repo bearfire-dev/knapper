@@ -113,10 +113,10 @@ describe("two-phase workspace lifecycle", () => {
   it("refuses to release or quarantine a live instance and never quits it", async () => {
     findPids.mockResolvedValue([1234]);
     await expect(releaseSession(key, { env })).rejects.toMatchObject({
-      fixedBy: "obsidian_workspace_stop",
+      fixedBy: "obsidian_session_reset",
     });
     await expect(quarantineSession(key, { env })).rejects.toMatchObject({
-      fixedBy: "obsidian_workspace_stop",
+      fixedBy: "obsidian_session_reset",
     });
     expect(quit).not.toHaveBeenCalled();
     expect(await readDescriptor(key, env)).toBeDefined();

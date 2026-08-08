@@ -8,40 +8,26 @@ export async function createLiveHome(prefix = "knapper-live-") {
   return { home, env: { ...process.env, KNAP_HOME: home } };
 }
 
-/**
- * Create an isolated workspace and prove its vault is Knapper-owned before callers write.
- * The workspace tool allocates CDP port zero, so no shared port can be selected by a suite.
- */
-export async function createDisposableWorkspace(client, root, options = {}) {
-  const opened = await client.call("obsidian_agent_open", {
-    label: options.agentLabel ?? "live-suite",
-    purpose: "isolated live validation",
-    cwd: root,
-  });
-  const agentHandle = opened.json?.agentHandle;
-  if (typeof agentHandle !== "string") throw new Error(`agent open failed: ${opened.text}`);
-  const args = { agentHandle, label: options.label ?? "isolated-live" };
+/** Open the one active isolated session and prove its vault is Knapper-owned. */
+export async function createDisposableWorkspace(client, _root, options = {}) {
+  const args = { target: "isolated", label: options.label ?? "isolated-live" };
   if (options.pluginSourceDir !== undefined) args.pluginSourceDir = options.pluginSourceDir;
   if (options.pluginId !== undefined) args.pluginId = options.pluginId;
-  const created = await client.call("obsidian_workspace_create", args);
-  const workspaceHandle = created.json?.workspaceHandle;
-  if (typeof workspaceHandle !== "string")
-    throw new Error(`workspace create failed: ${created.text}`);
+  const created = await client.call("obsidian_session_open", args);
+  const sessionKey = created.json?.session;
+  if (typeof sessionKey !== "string") throw new Error(`session open failed: ${created.text}`);
   const home = options.home ?? process.env.KNAP_HOME;
   if (!home) throw new Error("KNAP_HOME is required for isolated live suites");
-  const workspaces = JSON.parse(
-    await readFile(join(home, "workspaces", `${workspaceHandle}.json`), "utf8"),
-  );
   const session = JSON.parse(
-    await readFile(join(home, "sessions", workspaces.sessionKey, "session.json"), "utf8"),
+    await readFile(join(home, "sessions", sessionKey, "session.json"), "utf8"),
   );
   const vaultPath = resolve(session.ownership?.vaultPath ?? "");
   const ownedRoot = resolve(home);
   if (!session.ownership || !vaultPath.startsWith(`${ownedRoot}/`)) {
-    throw new Error(`workspace ${workspaceHandle} is not a Knapper-owned scratch vault`);
+    throw new Error(`session ${sessionKey} is not a Knapper-owned scratch vault`);
   }
   await stat(vaultPath);
-  return { agentHandle, workspaceHandle, vaultPath, session };
+  return { sessionKey, vaultPath, session };
 }
 
 export async function removeLiveHome(home) {

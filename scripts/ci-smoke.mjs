@@ -25,19 +25,6 @@ await rm(knapHome, { recursive: true, force: true });
 
 /** A port nothing can be listening on, so attach must fail fast. */
 const DEAD_CDP = "http://127.0.0.1:1";
-const CONTROL_TOOL_COUNT = 17;
-const ALL_TOOLSETS = [
-  "core",
-  "workspace",
-  "ui",
-  "telemetry",
-  "plugin-dev",
-  "editor",
-  "vault",
-  "devtools",
-  "authoring",
-];
-
 let failed = 0;
 function check(label, condition, detail = "") {
   if (condition) {
@@ -122,39 +109,23 @@ try {
   child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" })}\n`);
 
   const listed = await send("tools/list");
-  const controlTools = listed.result?.tools ?? [];
-  check(
-    "startup surface contains only control tools",
-    controlTools.length === CONTROL_TOOL_COUNT,
-    `${controlTools.length} tools`,
-  );
-
-  const controlNames = new Set(controlTools.map((tool) => tool.name));
+  const tools = listed.result?.tools ?? [];
+  const names = new Set(tools.map((tool) => tool.name));
+  check("startup surface contains operational tools", tools.length > 60, `${tools.length} tools`);
   for (const required of [
     "obsidian_status",
     "obsidian_doctor",
     "obsidian_capabilities",
-    "obsidian_toolsets",
-    "obsidian_agent_open",
-    "obsidian_workspace_claim_default",
-    "obsidian_tool_catalog",
-    "obsidian_toolsets_update",
+    "obsidian_session_open",
+    "obsidian_session_status",
+    "obsidian_session_release",
+    "obsidian_session_reset",
+    "browser_snapshot",
+    "browser_click",
+    "obsidian_plugin_health",
+    "obsidian_dev_cycle",
   ]) {
-    check(`${required} is registered`, controlNames.has(required));
-  }
-  check("operational tools start disabled", !controlNames.has("obsidian_eval"));
-
-  const enabledAll = await send("tools/call", {
-    name: "obsidian_toolsets_update",
-    arguments: { enable: ALL_TOOLSETS },
-  });
-  check("all operational toolsets enable at runtime", enabledAll.result?.isError !== true);
-  const expanded = await send("tools/list");
-  const tools = expanded.result?.tools ?? [];
-  const names = new Set(tools.map((tool) => tool.name));
-  check("runtime surface expands without reconnect", tools.length > 80, `${tools.length} tools`);
-  for (const required of ["browser_snapshot", "browser_click", "browser_take_screenshot"]) {
-    check(`${required} is registered without Obsidian`, names.has(required));
+    check(`${required} is registered`, names.has(required));
   }
   check("no duplicate tool names", names.size === tools.length);
   check(
@@ -166,28 +137,19 @@ try {
     tools.every((t) => typeof t.annotations?.readOnlyHint === "boolean"),
   );
 
-  check("legacy session tools are absent", !names.has("obsidian_isolate"));
+  check("legacy dynamic tool update is absent", !names.has("obsidian_toolsets_update"));
+  check("legacy agent handles are absent", !names.has("obsidian_agent_open"));
+  check("legacy workspace handles are absent", !names.has("obsidian_workspace_claim_default"));
 
-  const openedAgent = await send("tools/call", {
-    name: "obsidian_agent_open",
-    arguments: { label: "ci-smoke" },
+  const session = await send("tools/call", {
+    name: "obsidian_session_status",
+    arguments: {},
   });
-  const agentHandle = openedAgent.result?.structuredContent?.agentHandle;
-  check("agent handle opens", typeof agentHandle === "string", String(agentHandle));
-  const claimed = await send("tools/call", {
-    name: "obsidian_workspace_claim_default",
-    arguments: { agentHandle, label: "offline-default" },
-  });
-  const workspaceHandle = claimed.result?.structuredContent?.workspaceHandle;
-  check(
-    "default workspace handle opens",
-    typeof workspaceHandle === "string",
-    String(workspaceHandle),
-  );
+  check("session status answers without a handle", session.result?.isError !== true);
 
   const status = await send("tools/call", {
     name: "obsidian_status",
-    arguments: { workspaceHandle },
+    arguments: {},
   });
   const statusText = (status.result?.content ?? [])
     .filter((c) => c.type === "text")
@@ -202,7 +164,7 @@ try {
 
   const doctor = await send("tools/call", {
     name: "obsidian_doctor",
-    arguments: { workspaceHandle },
+    arguments: {},
   });
   const doctorText = (doctor.result?.content ?? [])
     .filter((c) => c.type === "text")
@@ -218,7 +180,7 @@ try {
   // error rather than a transport-level crash.
   const evaluated = await send("tools/call", {
     name: "obsidian_eval",
-    arguments: { workspaceHandle, code: "1+1" },
+    arguments: { code: "1+1" },
   });
   const evalText = (evaluated.result?.content ?? [])
     .filter((c) => c.type === "text")
@@ -229,35 +191,18 @@ try {
 
   const clicked = await send("tools/call", {
     name: "browser_click",
-    arguments: { workspaceHandle, target: ".workspace" },
+    arguments: { target: ".workspace" },
   });
   const clickText = (clicked.result?.content ?? [])
     .filter((c) => c.type === "text")
     .map((c) => c.text)
     .join("\n");
   check("browser calls fail cleanly without CDP", clicked.result?.isError === true);
-  check("browser failure points to obsidian_launch", /obsidian_launch|cold-start/i.test(clickText));
+  check("browser failure points to session setup", /obsidian_session_open/i.test(clickText));
 
-  const listChangesBeforeInspection = notifications.filter(
-    (method) => method === "notifications/tools/list_changed",
-  ).length;
-  const toolsets = await send("tools/call", {
-    name: "obsidian_toolsets",
-    arguments: {},
-  });
   check(
-    "toolset report is structured and read-only",
-    Array.isArray(toolsets.result?.structuredContent?.enabled) &&
-      Array.isArray(toolsets.result?.structuredContent?.disabled),
-  );
-  const afterToolsets = await send("tools/list");
-  const afterNames = new Set((afterToolsets.result?.tools ?? []).map((tool) => tool.name));
-  check("toolset inspection leaves tools/list unchanged", afterNames.size === names.size);
-  check("toolset control remains available", afterNames.has("obsidian_toolsets"));
-  check(
-    "toolset inspection emits no list_changed notification",
-    notifications.filter((method) => method === "notifications/tools/list_changed").length ===
-      listChangesBeforeInspection,
+    "static surface emits no list_changed notification",
+    !notifications.includes("notifications/tools/list_changed"),
   );
 } catch (e) {
   check(`smoke sequence completed`, false, e.message);

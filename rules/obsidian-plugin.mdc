@@ -11,6 +11,10 @@ alwaysApply: false
 
 ## Dev loop
 
+- Open one private target with `obsidian_session_open` before plugin work.
+- Use the active session implicitly. Do not pass caller-owned session identifiers.
+- Run one operation at a time. If Knapper returns `KNAPPER_BUSY`, wait for
+  `retryAfterMs` and check `obsidian_status`.
 - Build on the host (`npm run build`); the MCP server does not compile TypeScript.
 - Link into a dev vault with `obsidian_link_plugin` (symlink), never copy artifacts manually each time.
 - Verify with `obsidian_dev_cycle` after changes; read attributed errors from the response or `obsidian_logs(since=…)`.
@@ -30,6 +34,9 @@ alwaysApply: false
 ## Safety
 
 - Use a scratch dev vault for `obsidian_reset_state` and destructive tests.
+- Keep the private profile and `XDG_RUNTIME_DIR` isolation intact.
+- Use `obsidian_session_release` after testing. Knapper moves verified roots to
+  recoverable trash and never hard-deletes them.
 - Run `obsidian_doctor` when transports fail; quit Obsidian fully before expecting CDP after adding `--remote-debugging-port`.
 
 ## Tool discovery
@@ -38,3 +45,4 @@ alwaysApply: false
 - Plugin-dev: reload, manifest, settings, dev_cycle, exercise_command.
 - Telemetry: logs with cursor `since`, log_mark.
 - UI: `browser_*` (requires CDP).
+- The MCP tool list is fixed during initialization. Do not change it during a connection.

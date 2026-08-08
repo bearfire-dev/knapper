@@ -54,7 +54,7 @@ function outcomeText(outcome: ToolOutcome): string {
 }
 
 function registryFor(...toolsets: ("core" | "plugin-dev" | "authoring")[]): ToolRegistry {
-  return new ToolRegistry(new Set(toolsets), createLogger("error"), 2);
+  return new ToolRegistry(new Set(toolsets), createLogger("error"));
 }
 
 function context(

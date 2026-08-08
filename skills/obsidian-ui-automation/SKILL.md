@@ -5,8 +5,8 @@ description: Drive the live Obsidian desktop UI with knapper browser tools (Play
 
 # Obsidian UI automation (snapshot-first)
 
-UI tools require the optional `ui` toolset and a workspace handle. Pass
-`workspaceHandle` to every UI call. Isolated workspaces start with CDP enabled.
+UI tools are part of the fixed MCP surface. Use the active session for every UI
+call. Private sessions start with CDP enabled.
 
 ## Tool split
 
@@ -29,8 +29,8 @@ UI tools require the optional `ui` toolset and a workspace handle. Pass
 Example flow:
 
 ```text
-browser_snapshot(workspaceHandle=<workspaceHandle>)
-browser_click(workspaceHandle=<workspaceHandle>, target="e5", element="New note")
+browser_snapshot()
+browser_click(target="e5", element="New note")
 ```
 
 If you get `STALE_REF`, take a fresh snapshot and pick a new ref.
@@ -132,10 +132,10 @@ editor focused, which is what the `focus` argument is for.
 Testing a hotkey binding:
 
 ```text
-obsidian_hotkeys workspaceHandle=<workspaceHandle>
-obsidian_hotkeys workspaceHandle=<workspaceHandle> commandId=editor:toggle-bold
-obsidian_exercise_hotkey workspaceHandle=<workspaceHandle> keys=Control+p
-obsidian_exercise_hotkey workspaceHandle=<workspaceHandle> keys=Control+b focus=.cm-content
+obsidian_hotkeys
+obsidian_hotkeys commandId=editor:toggle-bold
+obsidian_exercise_hotkey keys=Control+p
+obsidian_exercise_hotkey keys=Control+b focus=.cm-content
 ```
 
 `obsidian_exercise_hotkey` reports a **verdict**, not just success: it samples the

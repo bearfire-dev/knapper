@@ -6,7 +6,7 @@
  * through `router.evaluateJson` with sources built in obsidian/editor-probe.ts,
  * so either transport can serve them and the renderer logic stays unit-tested.
  *
- * `obsidian_editor_replace` is hash-guarded: concurrent agents (and the user)
+ * `obsidian_editor_replace` is hash-guarded: queued calls (and the user)
  * share one live editor, so every edit must prove it saw the current document.
  */
 

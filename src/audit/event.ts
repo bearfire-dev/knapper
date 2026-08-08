@@ -45,12 +45,6 @@ function safeContext(context: AuditCallContext | undefined): AuditCallContext {
     ...(clientName
       ? { clientInfo: { name: clientName, ...(clientVersion ? { version: clientVersion } : {}) } }
       : {}),
-    ...(opaqueIdentifier(context.agentHandle)
-      ? { agentHandle: opaqueIdentifier(context.agentHandle) }
-      : {}),
-    ...(opaqueIdentifier(context.workspaceHandle)
-      ? { workspaceHandle: opaqueIdentifier(context.workspaceHandle) }
-      : {}),
     ...(safeLabel(context.transport) ? { transport: safeLabel(context.transport) } : {}),
     ...(safeLabel(context.protocolVersion)
       ? { protocolVersion: safeLabel(context.protocolVersion) }
@@ -114,8 +108,6 @@ export function toolAuditEvent(input: {
     arguments: argumentMetadata(input.args),
     ...(input.error ? { error: input.error } : {}),
     ...(context.clientInfo ? { client: context.clientInfo } : {}),
-    ...(context.agentHandle ? { agent_handle: context.agentHandle } : {}),
-    ...(context.workspaceHandle ? { workspace_handle: context.workspaceHandle } : {}),
     ...(context.transport ? { transport: context.transport } : {}),
     ...(context.protocolVersion ? { protocol_version: context.protocolVersion } : {}),
     ...(context.workspaceKind ? { workspace_kind: context.workspaceKind } : {}),

@@ -6,14 +6,12 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { passthroughMcpResult } from "../../src/browser/forward.js";
 import { validateScreenshotFilename } from "../../src/browser/proxy.js";
-import type { ServerContext } from "../../src/server.js";
-import { registerCoreTools } from "../../src/tools/core.js";
 import { ToolRegistry } from "../../src/tools/registry.js";
 import type { Toolset } from "../../src/toolsets.js";
 import { createLogger } from "../../src/util/logger.js";
 
 function registry(enabled: string[] = []): ToolRegistry {
-  return new ToolRegistry(new Set(enabled as Toolset[]), createLogger("error"), 2);
+  return new ToolRegistry(new Set(enabled as Toolset[]), createLogger("error"));
 }
 
 function bindWithConfigs(
@@ -107,64 +105,21 @@ describe("tool catalog", () => {
   });
 });
 
-describe("dynamic tool surface", () => {
-  it("starts with only core control tools and updates SDK handles at runtime", async () => {
-    const toolRegistry = registry();
+describe("static tool surface", () => {
+  it("binds operational tools without a workspace handle", () => {
+    const toolRegistry = registry(["ui"]);
     toolRegistry.add({
       name: "browser_example",
       toolset: "ui",
       description: "Example browser operation.",
       handler: async () => "ok",
     });
-    registerCoreTools({ registry: toolRegistry } as ServerContext);
+    const configs = new Map<string, Record<string, unknown>>();
+    bindWithConfigs(toolRegistry, configs);
 
-    expect(toolRegistry.names()).toEqual([
-      "obsidian_capabilities",
-      "obsidian_status",
-      "obsidian_tool_catalog",
-      "obsidian_toolsets",
-      "obsidian_toolsets_update",
-    ]);
-
-    const handles = new Map<string, RegisteredTool>();
-    const server = {
-      registerTool: vi.fn((name: string) => {
-        const handle = {
-          enabled: true,
-          enable() {
-            this.enabled = true;
-          },
-          disable() {
-            this.enabled = false;
-          },
-        } as RegisteredTool;
-        handles.set(name, handle);
-        return handle;
-      }),
-    } as unknown as McpServer;
-    toolRegistry.bind(server);
-
-    const update = toolRegistry.get("obsidian_toolsets_update")?.handler;
-    expect(update).toBeDefined();
-    const preview = await update?.({ enable: ["ui"], dryRun: true });
-    expect(handles.get("browser_example")?.enabled).toBe(false);
-    expect(preview).toMatchObject({
-      json: {
-        dryRun: true,
-        enabled: ["ui"],
-        changed: { enabled: ["ui"], toolCount: 1 },
-      },
-    });
-
-    const changed = await update?.({ enable: ["ui"] });
-    expect(handles.get("browser_example")?.enabled).toBe(true);
-    expect(changed).toMatchObject({
-      json: {
-        dryRun: false,
-        enabled: ["ui"],
-        changed: { enabled: ["ui"], toolCount: 1 },
-      },
-    });
+    expect(configs.has("browser_example")).toBe(true);
+    const inputSchema = configs.get("browser_example")?.inputSchema as Record<string, unknown>;
+    expect(inputSchema).not.toHaveProperty("workspaceHandle");
   });
 });
 

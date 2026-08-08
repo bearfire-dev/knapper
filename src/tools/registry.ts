@@ -7,14 +7,11 @@
  * call time rather than registration time, because a transport can appear or
  * disappear while the server is running (Obsidian restarts, debug port opens).
  *
- * Dispatch is also where call admission happens. Every tool drives the same live
- * Obsidian window, so a mutating call takes the exclusive lock and a read-only
- * call takes a bounded shared one. Classification comes from the `readOnlyHint`
- * annotation each tool already declares, and defaults to exclusive when the hint
- * is absent — an unannotated tool is assumed to touch the UI.
+ * Dispatch is also where call admission happens. Every tool uses the same live
+ * Obsidian target, so all calls enter one FIFO lane.
  */
 
-import type { McpServer, RegisteredTool } from "@modelcontextprotocol/server";
+import type { McpServer } from "@modelcontextprotocol/server";
 import { z, type ZodRawShape } from "zod";
 import type { Capability } from "../capabilities.js";
 import type { Toolset } from "../toolsets.js";
@@ -22,10 +19,9 @@ import type { Logger } from "../util/logger.js";
 import type { TelemetryStore } from "../telemetry/store.js";
 import { appendTelemetrySummary } from "../telemetry/helpers.js";
 import { toUobError, UobError } from "../util/errors.js";
-import { CallLock, type LockMode } from "../util/concurrency.js";
+import { CallLock } from "../util/concurrency.js";
 import { renderResult, safeStringify } from "../util/serialize.js";
 import { jsonSchemaToZodShape } from "../browser/json-schema.js";
-import type { DefaultProfileLease } from "../session/default-profile-lease.js";
 import { errorEnvelope, requestId, toolAuditEvent } from "../audit/event.js";
 import { JsonlAuditWriter } from "../audit/writer.js";
 import type {
@@ -72,12 +68,8 @@ export interface ToolDefinition<S extends ZodRawShape = ZodRawShape> {
   /** JSON Schema for proxied tools (converted to Zod at registration). */
   jsonOutputSchema?: Record<string, unknown>;
   annotations?: ToolAnnotations;
-  /** This tool never reads or drives the installation's default Obsidian profile. */
-  profileIndependent?: boolean | ((args: Record<string, unknown>) => boolean);
-  /** This control-plane tool does not require or bind a workspace handle. */
-  workspaceIndependent?: boolean;
-  /** A workspace-control tool must hold the same exclusive lease as operational tools. */
-  requiresWorkspaceLease?: boolean;
+  /** This control-plane tool does not require an active Obsidian target. */
+  targetIndependent?: boolean;
   /** Keep this control-plane tool enabled even when its toolset is disabled. */
   alwaysEnabled?: boolean;
   /**
@@ -183,7 +175,6 @@ function withTelemetrySuffix(
 
 export class ToolRegistry {
   private readonly definitions = new Map<string, ToolDefinition>();
-  private readonly handles = new Map<string, RegisteredTool>();
   private readonly lock: CallLock;
   private readonly audit: AuditSink | false;
   private auditWritePending = false;
@@ -191,22 +182,13 @@ export class ToolRegistry {
   constructor(
     enabledToolsets: Set<Toolset>,
     private readonly logger: Logger,
-    /**
-     * Read-only calls allowed to overlap.
-     *
-     * Required rather than defaulted: this used to fall back to `loadConfig()`,
-     * which both broke the repo's own "config lives in config.ts" rule and, once
-     * sessions existed, would size the lock from the *unbound* environment while
-     * the rest of the server ran against a session.
-     */
-    maxConcurrency: number,
     private readonly telemetry?: TelemetryStore,
-    private readonly profileLease?: DefaultProfileLease,
-    private readonly sessionBound: () => boolean = () => false,
     private readonly hooks: ToolRegistryHooks = {},
   ) {
     this.enabledToolsets = new Set(enabledToolsets);
-    this.lock = new CallLock({ maxShared: maxConcurrency });
+    // Every tool reaches the same live Obsidian target. Keep one FIFO lane so
+    // overlapping agent calls cannot interleave UI, CLI, or plugin state.
+    this.lock = new CallLock({ maxShared: 1 });
     this.audit = hooks.audit === undefined ? new JsonlAuditWriter() : hooks.audit;
   }
 
@@ -229,7 +211,7 @@ export class ToolRegistry {
       });
   }
 
-  /** Retain every definition so its toolset can be enabled at runtime. */
+  /** Retain a definition for the fixed startup surface. */
   add<S extends ZodRawShape>(def: ToolDefinition<S>): void {
     if (this.definitions.has(def.name)) {
       throw new Error(`Duplicate tool registration: ${def.name}`);
@@ -339,23 +321,6 @@ export class ToolRegistry {
     };
   }
 
-  /** Enable or disable one toolset through the SDK registration handles. */
-  setToolsetEnabled(toolset: Toolset, enabled: boolean): string[] {
-    if (enabled) this.enabledToolsets.add(toolset);
-    else this.enabledToolsets.delete(toolset);
-
-    const changed: string[] = [];
-    for (const def of this.definitions.values()) {
-      if (def.toolset !== toolset || def.alwaysEnabled === true) continue;
-      const handle = this.handles.get(def.name);
-      if (!handle || handle.enabled === enabled) continue;
-      if (enabled) handle.enable();
-      else handle.disable();
-      changed.push(def.name);
-    }
-    return changed.sort();
-  }
-
   /** All retained definitions grouped by toolset, including disabled tools. */
   groupAllByToolset(): Record<string, string[]> {
     const out: Record<string, string[]> = {};
@@ -376,19 +341,12 @@ export class ToolRegistry {
    */
   bind(server: McpServer): void {
     for (const def of this.definitions.values()) {
+      if (!this.isDefinitionEnabled(def)) continue;
       const config: Record<string, unknown> = { description: def.description };
       const shape = def.jsonInputSchema
         ? jsonSchemaToZodShape(def.jsonInputSchema)
         : (def.inputSchema ?? {});
-      config.inputSchema =
-        def.workspaceIndependent === true
-          ? shape
-          : {
-              ...shape,
-              workspaceHandle: z
-                .string()
-                .describe("Explicit workspace handle returned by an obsidian_workspace_* tool."),
-            };
+      config.inputSchema = shape;
       if (def.jsonOutputSchema) {
         config.outputSchema = jsonSchemaToZodShape(def.jsonOutputSchema);
       } else if (def.outputSchema) {
@@ -401,7 +359,7 @@ export class ToolRegistry {
       }
       config.annotations = { readOnlyHint: false, ...def.annotations };
 
-      const handle = server.registerTool(
+      server.registerTool(
         def.name,
         config as never,
         (async (
@@ -417,15 +375,11 @@ export class ToolRegistry {
           let auditContext: AuditCallContext | undefined;
           let auditOutcome: "success" | "error" = "success";
           let auditError: AuditErrorEnvelope | undefined;
-          // Workspace binding mutates the shared router, capture, telemetry
-          // delegate, and configuration. Keep the exclusive grant through the
-          // complete handler so a second workspace cannot rebind mid-call.
-          const mode: LockMode =
-            def.workspaceIndependent === true && def.annotations?.readOnlyHint === true
-              ? "shared"
-              : "exclusive";
+          let completedOutcome: ToolOutcome | UobError | undefined;
+          // The shared router, capture, telemetry delegate, and configuration all
+          // target one app. Keep the exclusive grant through the complete handler.
           try {
-            return await this.lock.run(mode, def.name, async () => {
+            return await this.lock.run("exclusive", def.name, async () => {
               // Read the telemetry cursor after admission, not before: a call that
               // waited in the queue would otherwise report every log line produced
               // by the calls it was queued behind.
@@ -435,15 +389,8 @@ export class ToolRegistry {
               queueMs = ranAt - started;
               await this.hooks.beforeInvoke?.(def, callArgs, requestContext);
               auditContext = await this.hooks.contextProvider?.(callArgs, requestContext);
-              const invoke = (): Promise<ToolOutcome> => def.handler(callArgs);
-              const profileIndependent =
-                typeof def.profileIndependent === "function"
-                  ? def.profileIndependent(callArgs)
-                  : def.profileIndependent === true;
-              let outcome =
-                profileIndependent || this.sessionBound() || !this.profileLease
-                  ? await invoke()
-                  : await this.profileLease.run(def.name, invoke);
+              let outcome = await def.handler(callArgs);
+              completedOutcome = outcome;
               if (
                 this.telemetry &&
                 def.annotations?.readOnlyHint !== true &&
@@ -470,6 +417,7 @@ export class ToolRegistry {
             });
           } catch (e) {
             const err = toUobError(e);
+            completedOutcome = err;
             auditOutcome = "error";
             auditError = errorEnvelope(err);
             this.logger.warn("tool failed", {
@@ -479,6 +427,16 @@ export class ToolRegistry {
             });
             return errorResult(err);
           } finally {
+            if (admitted && completedOutcome !== undefined) {
+              try {
+                await this.hooks.afterInvoke?.(def, callArgs, requestContext, completedOutcome);
+              } catch (hookError) {
+                this.logger.warn("afterInvoke hook failed", {
+                  tool: def.name,
+                  error: hookError instanceof Error ? hookError.name : "UnknownHookError",
+                });
+              }
+            }
             if (this.audit !== false) {
               this.queueAudit(
                 toolAuditEvent({
@@ -497,8 +455,6 @@ export class ToolRegistry {
           }
         }) as never,
       );
-      this.handles.set(def.name, handle);
-      if (!this.isDefinitionEnabled(def)) handle.disable();
     }
     this.logger.info(`registered ${this.definitions.size} tools`, this.byToolset());
   }

@@ -4,8 +4,11 @@ Run a full **build → link → reload → verify** loop against the live Obsidi
 
 ## Prerequisites
 
-1. Call `obsidian_doctor` and apply every remediation until CLI and CDP are healthy.
-2. Call `obsidian_launch` if Obsidian is not running with `--remote-debugging-port`.
+1. Call `obsidian_session_open` with the plugin source directory and ID.
+2. Call `obsidian_doctor` and apply each remediation until CLI and CDP are healthy.
+3. Call `obsidian_status` and confirm that the private target is ready.
+
+Use `obsidian_launch` only for an approved default-profile flow.
 
 ## Steps
 

@@ -38,8 +38,6 @@ export interface SessionDescriptor {
   readiness: SessionReadiness;
   /** Provenance for diagnostics. Never used for routing. */
   origin: { cwd: string; branch?: string; label?: string };
-  /** Explicit stateless-MCP attribution. The session key remains an internal id. */
-  agentHandle?: string;
   /**
    * Filesystem identity recorded at creation. Cleanup must match every field and
    * the derived session path before it can quarantine the scratch directory.

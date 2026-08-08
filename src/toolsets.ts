@@ -9,7 +9,6 @@
 
 export const TOOLSETS = [
   "core",
-  "workspace",
   "ui",
   "telemetry",
   "plugin-dev",
@@ -21,13 +20,17 @@ export const TOOLSETS = [
 
 export type Toolset = (typeof TOOLSETS)[number];
 
-/** Operational tools are opt-in. Control-plane tools use `alwaysEnabled`. */
-export const DEFAULT_TOOLSETS: readonly Toolset[] = [];
+/** Toolsets that every MCP server registers at startup. */
+export const DEFAULT_TOOLSETS: readonly Toolset[] = [
+  "core",
+  "ui",
+  "telemetry",
+  "plugin-dev",
+  "editor",
+];
 
 export const TOOLSET_DESCRIPTIONS: Record<Toolset, string> = {
   core: "Status, doctor, launch, eval, CLI, and command-palette execution.",
-  workspace:
-    "Explicit agent and workspace handles for isolated scratch instances or the default profile.",
   ui: "Browser automation over CDP (proxied from @playwright/mcp) plus Obsidian-scoped snapshots.",
   telemetry: "Console, error, and network capture with cursor-based tailing.",
   "plugin-dev": "Plugin reload, manifest and settings inspection, and dev-cycle composites.",
@@ -49,9 +52,8 @@ export interface ToolsetParseResult {
 }
 
 /**
- * Parse a comma-separated toolset spec. `all` enables everything. Unknown names are
- * collected rather than thrown so the server can warn and continue — a typo in an
- * env var should not prevent startup.
+ * Parse a comma-separated toolset spec. `all` enables every toolset. Unknown names
+ * are collected so a typo in an environment variable does not prevent startup.
  */
 export function parseToolsets(spec: string | undefined): ToolsetParseResult {
   if (spec === undefined || spec.trim() === "") {
@@ -62,19 +64,18 @@ export function parseToolsets(spec: string | undefined): ToolsetParseResult {
     .split(",")
     .map((t) => t.trim().toLowerCase())
     .filter((t) => t !== "");
+  const unknown = tokens.filter((token) => token !== "all" && !isToolset(token));
 
   if (tokens.includes("all")) {
-    return { enabled: new Set(TOOLSETS), unknown: [] };
+    return { enabled: new Set(TOOLSETS), unknown };
   }
 
   const enabled = new Set<Toolset>();
-  const unknown: string[] = [];
   for (const token of tokens) {
     if (isToolset(token)) enabled.add(token);
-    else unknown.push(token);
   }
 
-  // An all-garbage spec falls back to the empty operational surface.
+  // An all-garbage spec falls back to the default startup surface.
   if (enabled.size === 0) return { enabled: new Set(DEFAULT_TOOLSETS), unknown };
 
   return { enabled, unknown };

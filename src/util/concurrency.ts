@@ -85,8 +85,7 @@ function queueTimeout(label: string, mode: LockMode, waitedMs: number, stats: Lo
         "Tool calls are serialized because they drive one live Obsidian window, so this call was " +
         "queued behind another that has not finished. A tool is most likely wedged on the UI — an " +
         "open modal or dialog swallowing input is the usual cause. Take a screenshot or snapshot to " +
-        "see the current window state, dismiss anything blocking, then retry. Raise " +
-        "KNAP_MAX_CONCURRENCY only if the blocked calls are read-only.",
+        "see the current window state, dismiss anything blocking, then retry.",
       details: {
         tool: label,
         mode,

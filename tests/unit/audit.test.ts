@@ -33,8 +33,6 @@ describe("audit persistence", () => {
       args: {},
       context: {
         clientInfo: { name: "user@example.com", version: "secret-version" },
-        agentHandle: "agent-secret",
-        workspaceHandle: "workspace-secret",
         traceId: "trace-secret",
       },
     });
@@ -42,8 +40,6 @@ describe("audit persistence", () => {
     expect(event.request_id).toMatch(/^sha256:/);
     expect(event.trace_id).toMatch(/^sha256:/);
     expect(event.client?.name).toMatch(/^sha256:/);
-    expect(event.agent_handle).toMatch(/^sha256:/);
-    expect(event.workspace_handle).toMatch(/^sha256:/);
     expect(JSON.stringify(event)).not.toMatch(/example\.com|secret/);
   });
 
