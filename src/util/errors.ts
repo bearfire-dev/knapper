@@ -21,6 +21,8 @@ export type ErrorCode =
   | "TIMEOUT"
   | "INVALID_ARGUMENT"
   | "PLUGIN_NOT_FOUND"
+  /** The requested plugin directory is not a loadable Obsidian artifact. */
+  | "PLUGIN_ARTIFACT_INVALID"
   /** Refused to *delete* a vault knapper did not create. Never downgrade this. */
   | "VAULT_NOT_MANAGED"
   /**
@@ -46,6 +48,8 @@ export type ErrorCode =
   | "OBSIDIAN_LAUNCH_FAILED"
   /** Another MCP server currently owns the installation's default profile. */
   | "DEFAULT_PROFILE_BUSY"
+  /** Another live Knapper process owns the single managed Obsidian lane. */
+  | "KNAPPER_BUSY"
   | "WORKSPACE_BUSY"
   | "INTERNAL";
 

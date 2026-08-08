@@ -34,7 +34,7 @@ export async function validatePluginDir(
       id?: string;
     };
   } catch {
-    throw new UobError("INVALID_ARGUMENT", `No manifest.json in ${sourceDir}.`, {
+    throw new UobError("PLUGIN_ARTIFACT_INVALID", `No manifest.json in ${sourceDir}.`, {
       remediation:
         "Point sourceDir at a loadable plugin directory containing manifest.json and main.js.",
       details: { sourceDir },
@@ -43,25 +43,33 @@ export async function validatePluginDir(
 
   const id = manifest.id;
   if (id === undefined || id === "") {
-    throw new UobError("INVALID_ARGUMENT", "manifest.json has no id field.", {
+    throw new UobError("PLUGIN_ARTIFACT_INVALID", "manifest.json has no id field.", {
+      remediation: "Set a non-empty id in manifest.json.",
       details: { sourceDir },
     });
   }
   if (override !== undefined && override !== "" && override !== id) {
     throw new UobError(
-      "INVALID_ARGUMENT",
+      "PLUGIN_ARTIFACT_INVALID",
       `Plugin id "${override}" does not match manifest id "${id}".`,
-      { details: { sourceDir, pluginId: override, manifestId: id } },
+      {
+        remediation: "Make pluginId match the manifest.json id, or omit pluginId.",
+        details: { sourceDir, pluginId: override, manifestId: id },
+      },
     );
   }
 
   const mainPath = join(sourceDir, "main.js");
   const main = await stat(mainPath).catch(() => undefined);
   if (main?.isFile() !== true) {
-    throw new UobError("INVALID_ARGUMENT", `Plugin directory ${sourceDir} has no main.js file.`, {
-      remediation: "Build the plugin and point sourceDir at its loadable artifact directory.",
-      details: { sourceDir, missing: ["main.js"] },
-    });
+    throw new UobError(
+      "PLUGIN_ARTIFACT_INVALID",
+      `Plugin directory ${sourceDir} has no main.js file.`,
+      {
+        remediation: "Build the plugin and point sourceDir at its loadable artifact directory.",
+        details: { sourceDir, missing: ["main.js"] },
+      },
+    );
   }
   const styles = await stat(join(sourceDir, "styles.css")).catch(() => undefined);
   return {

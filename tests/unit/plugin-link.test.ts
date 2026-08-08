@@ -32,20 +32,23 @@ describe("validatePluginDir", () => {
 
   it("rejects a missing manifest", async () => {
     await expect(validatePluginDir(await pluginDir({ main: true }))).rejects.toMatchObject({
-      code: "INVALID_ARGUMENT",
+      code: "PLUGIN_ARTIFACT_INVALID",
     });
   });
 
   it("rejects a missing main.js", async () => {
     await expect(
       validatePluginDir(await pluginDir({ manifest: { id: "demo" } })),
-    ).rejects.toMatchObject({ code: "INVALID_ARGUMENT", details: { missing: ["main.js"] } });
+    ).rejects.toMatchObject({
+      code: "PLUGIN_ARTIFACT_INVALID",
+      details: { missing: ["main.js"] },
+    });
   });
 
   it("rejects an explicit id that differs from the manifest", async () => {
     const dir = await pluginDir({ manifest: { id: "demo" }, main: true });
     await expect(validatePluginDir(dir, "other")).rejects.toMatchObject({
-      code: "INVALID_ARGUMENT",
+      code: "PLUGIN_ARTIFACT_INVALID",
       details: { pluginId: "other", manifestId: "demo" },
     });
   });

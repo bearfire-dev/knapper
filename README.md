@@ -1,6 +1,6 @@
 # knapper
 
-MCP server that drives a **live Obsidian desktop app** for plugin development. It provides native CLI commands, fenced browser automation, durable telemetry, dev-cycle tools, and isolated workspaces for concurrent agents.
+MCP server that drives a **live Obsidian desktop app** for plugin development. It provides native CLI commands, fenced browser automation, telemetry, and plugin development tools through one guarded session.
 
 _Knapping is the craft of shaping obsidian into tools._
 
@@ -15,25 +15,23 @@ throughout — but they are written from documentation rather than measured agai
 running app, and no live suite has ever executed on either. Treat them as untested.
 Bug reports and fixes from other platforms are welcome.
 
-| Platform    | Status                          | Notes                                                                                                             |
-| ----------- | ------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
-| **Linux**   | Tested                          | Every live suite runs here. See [docs/verified-environment.md](docs/verified-environment.md) for the exact build. |
-| **macOS**   | Untested                        | Most tools should work. Isolated workspaces are not verified.                                                     |
-| **Windows** | Untested, isolation unsupported | `obsidian_workspace_create` refuses rather than create an unsafe workspace.                                       |
+| Platform    | Status   | Notes                                                                                                             |
+| ----------- | -------- | ----------------------------------------------------------------------------------------------------------------- |
+| **Linux**   | Tested   | Every live suite runs here. See [docs/verified-environment.md](docs/verified-environment.md) for the exact build. |
+| **macOS**   | Untested | Most tools should work. Private sessions are not verified.                                                        |
+| **Windows** | Untested | Live use is not verified.                                                                                         |
 
-The one hard limit is **isolated workspaces**, and it comes from Obsidian itself.
-Each isolated instance needs its own CLI socket. Obsidian derives that
-path per platform:
+Knapper uses one managed Obsidian session. Private profile isolation still matters
+when Knapper starts a test instance. Each private instance needs its own CLI socket.
 
-| Platform | Socket keyed on                      | Isolation                                      |
-| -------- | ------------------------------------ | ---------------------------------------------- |
-| Linux    | `$XDG_RUNTIME_DIR`                   | **per-workspace** — the environment selects it |
-| macOS    | `os.homedir()`, environment excluded | shared, only via a `HOME` override, unproven   |
-| Windows  | `\\.\pipe\obsidian-cli-<username>`   | **impossible** — no environment input at all   |
+| Platform | Socket keyed on                      | Isolation                                    |
+| -------- | ------------------------------------ | -------------------------------------------- |
+| Linux    | `$XDG_RUNTIME_DIR`                   | **per-session** — the environment selects it |
+| macOS    | `os.homedir()`, environment excluded | shared, only via a `HOME` override, unproven |
+| Windows  | `\\.\pipe\obsidian-cli-<username>`   | **impossible** — no environment input at all |
 
-So `obsidian_workspace_create` throws a typed refusal on Windows. It does not return
-a workspace whose CLI commands can reach someone else's app. Everything else —
-both transports, all other toolsets — is platform-independent in principle.
+Knapper refuses any launch that cannot isolate the private profile and CLI socket.
+It never routes a call to an unverified Obsidian process.
 
 CI runs `ubuntu-latest` only, and covers lint, types, unit tests, and a packaged
 install. The live suites need a real desktop Obsidian and run on a maintainer's
@@ -91,7 +89,7 @@ agent how to drive them. Install the server alone, or both.
 Install a specific release tarball, then point your client at the `knapper` binary:
 
 ```bash
-npm i -g https://github.com/bearfire-dev/knapper/releases/download/v0.6.0-beta.7/knapper-0.6.0-beta.7.tgz
+npm i -g https://github.com/bearfire-dev/knapper/releases/download/v0.7.0-beta.1/knapper-0.7.0-beta.1.tgz
 ```
 
 ```json
@@ -201,16 +199,12 @@ Then point your client at `node /absolute/path/to/dist/cli.js`.
 
 ## First run
 
-Start with explicit ownership and target selection:
+Start one session before you use Obsidian:
 
-1. Run **`obsidian_toolsets_update`** to enable the operational toolsets for the task.
-2. Run **`obsidian_agent_open`** and keep its `agentHandle`.
-3. Run **`obsidian_workspace_create`** for safe plugin work. Use
-   **`obsidian_workspace_claim_default`** only for a user-approved existing vault.
-4. Pass the returned `workspaceHandle` to **`obsidian_doctor`** and every other
-   operational tool.
-5. Apply the fixes that doctor names. These are usually **`obsidian_setup_cli`** and
-   **`obsidian_launch`** for the default profile. Isolated workspaces start ready.
+1. Call **`obsidian_session_open`** with the plugin source and ID when you need a private test session.
+2. Call **`obsidian_status`** to confirm that the session is `self` and that the target is ready.
+3. Apply the fixes that doctor names. These are usually **`obsidian_setup_cli`** and
+   **`obsidian_launch`** for the default profile. Private sessions start ready.
 
 Then the development loop: **`obsidian_link_plugin`** to symlink your build output
 into a vault, build, and **`obsidian_dev_cycle`** to reload the plugin and report
@@ -243,90 +237,68 @@ against it. For experiments, make throwaway space instead — see below.
 `obsidian_doctor` and `obsidian_status` show which vaults are authorized and how, so
 an agent can diagnose a refusal without guessing.
 
-`obsidian_create_vault` refuses when an isolated workspace is selected. Use the
-scratch vault that `obsidian_workspace_create` created for that workspace.
+`obsidian_create_vault` refuses when a private session is selected. Use the scratch
+vault that `obsidian_session_open` creates for that session.
 
-## Agent and workspace handles
+## Stateless session use
 
-Open an agent handle before you use Obsidian. Then create an isolated workspace or
-claim the default profile.
+The MCP tool list is fixed during initialization. It includes the UI and plugin
+tools that an agent needs. Knapper does not send `notifications/tools/list_changed`.
 
-```text
-obsidian_agent_open label=my-feature
-  → agentHandle
+Call `obsidian_session_open` to create or reuse one managed session. Operational
+tools use that session automatically. They do not accept caller-owned session
+identifiers.
 
-obsidian_workspace_create agentHandle=<agentHandle> pluginSourceDir=/abs/plugin pluginId=my-plugin
-  → workspaceHandle
-```
+Call `obsidian_session_status` to inspect the session. Call `obsidian_session_release`
+to release your claim while the private app stays ready for reuse. Call
+`obsidian_session_reset` to stop the session and create a new private target. Knapper moves verified private roots to
+recoverable trash when cleanup requires removal. It never hard-deletes them.
 
-Pass `workspaceHandle` to every operational tool. The handle selects one exact
-Obsidian instance across stdio reconnects and stateless HTTP requests. It is a
-coordination identifier, not an authentication credential.
+Only one operation runs at a time. A second Knapper process receives `KNAPPER_BUSY`.
+`obsidian_status` reports `free`, `self`, `busy`, or `stale`, with the last activity
+time and a retry interval. Knapper reclaims a stale owner after it verifies process
+death or an expired activity record.
 
-One live Knapper process holds an exclusive lease for each workspace. A second
-process receives `WORKSPACE_BUSY`. Knapper renews the lease after successful calls.
-An idle lease expires after `KNAP_IDLE_TIMEOUT_MS` when no calls remain.
-Knapper immediately reclaims a lease after it proves process death or PID reuse.
-
-An isolated workspace always creates its own scratch vault. It does not accept an
-existing vault path. It also does not write ownership files into vaults. Use
-`obsidian_workspace_restart` to restart only that workspace.
-
-Knapper verifies the private Obsidian session before it routes tools to the
-workspace. The result contains `visualIdentity.state` and
-`visualIdentity.warnings`. Knapper does not report the workspace as ready unless
-the test banner, title, icon, and desktop class are present.
-
-Call `obsidian_workspace_stop` before `obsidian_workspace_destroy`. The destroy
-tool refuses an active workspace. It moves the verified workspace root into
-recoverable trash under `KNAP_HOME`. Knapper does not hard-delete the root.
-Knapper cannot destroy a default-profile workspace.
-
-Use `obsidian_workspace_release` when you want to keep the stopped scratch vault.
-
-Use `obsidian_workspace_claim_default` only when the user wants their own Obsidian
-profile. Existing vault access still requires terminal authorization. Registry
-membership never grants access or deletion rights.
-
-Workspace and agent leases last 24 hours after the last activity. Internal instance
-cleanup uses the same default. Isolated workspaces are Linux-only in practice.
+Use the default profile only after the user approves it and the vault is authorized.
+Knapper keeps the profile and `XDG_RUNTIME_DIR` private for managed sessions.
 
 ## Configuration
 
 Set options via **environment variables** (and a subset via CLI flags). See [docs/configuration.md](docs/configuration.md) for examples.
 
-| Setting             | Env var                  | CLI flag         | Default                        |
-| ------------------- | ------------------------ | ---------------- | ------------------------------ |
-| CDP URL             | `OBSIDIAN_CDP_URL`       | `--cdp-url`      | `http://127.0.0.1:9222`        |
-| Obsidian binary     | `OBSIDIAN_BIN`           | `--obsidian-bin` | OS default                     |
-| Default vault       | `OBSIDIAN_VAULT`         | `--vault`, `-v`  | (active / unset)               |
-| Toolsets            | `KNAP_TOOLSETS`          | `--toolsets`     | empty (control tools only)     |
-| knapper's disk root | `KNAP_HOME`              | —                | `~/.knapper_mcp`               |
-| Log level           | `KNAP_LOG_LEVEL`         | `--log-level`    | `info`                         |
-| Telemetry buffer    | `KNAP_TELEMETRY_BUFFER`  | —                | `2000`                         |
-| Network capture     | `KNAP_TELEMETRY_NETWORK` | —                | `false`                        |
-| CDP reconnect delay | `KNAP_RECONNECT_MS`      | —                | `2000`                         |
-| Screenshot dir      | `KNAP_SCREENSHOT_DIR`    | `--output-dir`   | `./.knapper`                   |
-| CLI timeout         | `KNAP_CLI_TIMEOUT_MS`    | —                | `15000`                        |
-| Idle ownership      | `KNAP_IDLE_TIMEOUT_MS`   | —                | `86400000` (24 hours)          |
-| Command transport   | `KNAP_COMMAND_TRANSPORT` | —                | `auto` (`cli` or `playwright`) |
-| Window match        | `OBSIDIAN_TARGET_MATCH`  | `--target-match` | (unset)                        |
-| Transport           | `MCP_TRANSPORT`          | `--transport`    | `stdio`                        |
-| HTTP port           | `MCP_PORT`               | `--port`         | `9223`                         |
-| HTTP host           | `MCP_HOST`               | `--host`         | `127.0.0.1`                    |
-| Max concurrency     | `KNAP_MAX_CONCURRENCY`   | —                | `4`                            |
+| Setting             | Env var                  | CLI flag         | Default                                         |
+| ------------------- | ------------------------ | ---------------- | ----------------------------------------------- |
+| CDP URL             | `OBSIDIAN_CDP_URL`       | `--cdp-url`      | `http://127.0.0.1:9222`                         |
+| Obsidian binary     | `OBSIDIAN_BIN`           | `--obsidian-bin` | OS default                                      |
+| Default vault       | `OBSIDIAN_VAULT`         | `--vault`, `-v`  | (active / unset)                                |
+| Toolsets            | `KNAP_TOOLSETS`          | `--toolsets`     | core, UI, telemetry, plugin development, editor |
+| knapper's disk root | `KNAP_HOME`              | —                | `~/.knapper_mcp`                                |
+| Log level           | `KNAP_LOG_LEVEL`         | `--log-level`    | `info`                                          |
+| Telemetry buffer    | `KNAP_TELEMETRY_BUFFER`  | —                | `2000`                                          |
+| Network capture     | `KNAP_TELEMETRY_NETWORK` | —                | `false`                                         |
+| CDP reconnect delay | `KNAP_RECONNECT_MS`      | —                | `2000`                                          |
+| Screenshot dir      | `KNAP_SCREENSHOT_DIR`    | `--output-dir`   | `./.knapper`                                    |
+| CLI timeout         | `KNAP_CLI_TIMEOUT_MS`    | —                | `15000`                                         |
+| Session cleanup     | `KNAP_IDLE_TIMEOUT_MS`   | —                | `86400000` (24 hours)                           |
+| Activity ownership  | `KNAP_ACTIVITY_IDLE_MS`  | —                | `300000` (5 minutes)                            |
+| Command transport   | `KNAP_COMMAND_TRANSPORT` | —                | `auto` (`cli` or `playwright`)                  |
+| Window match        | `OBSIDIAN_TARGET_MATCH`  | `--target-match` | (unset)                                         |
+| Transport           | `MCP_TRANSPORT`          | `--transport`    | `stdio`                                         |
+| HTTP port           | `MCP_PORT`               | `--port`         | `9223`                                          |
+| HTTP host           | `MCP_HOST`               | `--host`         | `127.0.0.1`                                     |
 
 `LOG_LEVEL`, `RECONNECT_MS`, and `SCREENSHOT_DIR` are also accepted as aliases; the `KNAP_`-prefixed name wins when both are set.
 
-When a tool selects an isolated workspace, screenshots use that workspace's own
+When a session selects a private target, screenshots use that target's own
 `output/` directory. A requested screenshot path must be relative to the configured
 output root. Screenshot tools return a file path and never return inline base64 data.
 
 Tools publish MCP output schemas and return machine-readable `structuredContent`.
 Clients do not need to parse the display text.
 
-The default `stdio` transport is what MCP clients use. `--transport http` serves
-MCP at `/mcp` (for example `http://127.0.0.1:9223/mcp`). Each request is stateless.
+The default `stdio` transport is what MCP clients use. HTTP is experimental and
+uses one global lane. `--transport http` serves MCP at `/mcp` (for example
+`http://127.0.0.1:9223/mcp`). Each request uses the active session.
 The listener can bind only to `127.0.0.1` or `::1`. It cannot bind to a wildcard,
 LAN address, or the `localhost` name. Requests can use `localhost`, `127.0.0.1`,
 or `[::1]` in their `Host` and `Origin` headers. The server has no authentication.
@@ -341,7 +313,7 @@ Gating keeps tool count manageable for model tool selection.
 | Toolset      | Startup | Description                                                                                                          |
 | ------------ | ------- | -------------------------------------------------------------------------------------------------------------------- |
 | `core`       | no      | Status, doctor, launch, eval, CLI, commands, attach                                                                  |
-| `workspace`  | no      | Explicit agent and workspace handles, with isolated scratch instances on Linux                                       |
+| `session`    | yes     | One managed session and its lifecycle operations                                                                     |
 | `ui`         | no      | Fenced `browser_*` tools for real UI interaction, plus `obsidian_snapshot`                                           |
 | `telemetry`  | no      | Console/error/network capture, cursor tailing                                                                        |
 | `plugin-dev` | no      | Reload, manifest/settings, `obsidian_dev_cycle`, exercise/reset                                                      |
@@ -350,22 +322,16 @@ Gating keeps tool count manageable for model tool selection.
 | `devtools`   | no      | DOM/CSS/CDP passthrough, OS-window screenshots, mobile emulation                                                     |
 | `authoring`  | no      | Themes, snippets, properties, tags, tasks, daily notes, templates                                                    |
 
-Set the startup surface with `KNAP_TOOLSETS` or `--toolsets`. An empty value starts
-only the 17 control tools. This small surface reduces tool-selection context.
-
-Use `obsidian_toolsets` to inspect the enabled set. Use `obsidian_tool_catalog` to
-search all tool definitions. Use `obsidian_toolsets_update` to change the surface.
-Pass toolset names in `enable` or `disable`. Set `dryRun` to preview the change.
-Knapper sends `notifications/tools/list_changed` after an effective change.
-
-The control tools always remain visible. They cover agent and workspace lifecycle,
-status, diagnosis, capabilities, toolset state, the catalog, and toolset updates.
+Knapper publishes the complete startup surface during MCP initialization. The tool
+list does not change during a connection. Do not change the tool list after startup.
+The fixed surface includes session lifecycle, status, plugin development, telemetry,
+editor, UI, and opt-in vault tools.
 
 ### Representative tools
 
 **Core & provisioning:** `obsidian_status`, `obsidian_doctor`, `obsidian_launch`, `obsidian_setup_cli`, `obsidian_setup_vault`, `obsidian_link_plugin`, `obsidian_list_targets`, `obsidian_attach`, `obsidian_eval`, `obsidian_cli`, `obsidian_commands`, `obsidian_command`
 
-**Workspaces:** `obsidian_agent_open`, `obsidian_agent_status`, `obsidian_agent_close`, `obsidian_workspace_create`, `obsidian_workspace_claim_default`, `obsidian_workspace_list`, `obsidian_workspace_status`, `obsidian_workspace_stop`, `obsidian_workspace_restart`, `obsidian_workspace_release`, `obsidian_workspace_destroy`
+**Session:** `obsidian_session_open`, `obsidian_session_status`, `obsidian_session_release`, `obsidian_session_reset`
 
 **Plugin dev:** `obsidian_plugin_list`, `obsidian_plugin_manifest`, `obsidian_plugin_settings`, `obsidian_plugin_reload`, `obsidian_dev_cycle`, `obsidian_exercise_command`, `obsidian_reset_state`, `obsidian_plugin_health`
 
@@ -391,19 +357,17 @@ Browser tools are **snapshot-first**: call `browser_snapshot` (or the cheaper sc
 | **CLI disabled**         | `CLI_DISABLED`, or stdout marker `Command line interface is not enabled.` | `obsidian_setup_cli` or Settings → Advanced → Command line interface                    |
 | **CDP port closed**      | `CDP_PORT_CLOSED`, attach timeouts                                        | Quit Obsidian completely; cold start with `--remote-debugging-port` (`obsidian_launch`) |
 | **Argv corruption**      | `ARGV_CORRUPTION`, `Command "-foo" not found`                             | Fix `user-flags.conf` to use `--double-dash` flags                                      |
-| **Default profile busy** | `DEFAULT_PROFILE_BUSY`                                                    | Create an isolated workspace, then retry with its handle                                |
-| **Workspace busy**       | `WORKSPACE_BUSY`                                                          | Wait for the owner to release it, or create another workspace                           |
+| **Session busy**         | `KNAPPER_BUSY`                                                            | Wait for the retry interval, then call `obsidian_status`                                |
 
 Launch failures use `OBSIDIAN_LAUNCH_FAILED`. The error includes the exit signal, exit code, and bounded launch output when available.
 
 Also:
 
-- **Several MCP hosts are active** — one server owns the default profile at a time. Create an isolated workspace for concurrent work.
-- **Expired workspaces** — agent and workspace handles expire after 24 idle hours. Create a new handle if one expires. Internal cleanup can stop abandoned isolated instances and quarantine only verified scratch roots.
+- **Several MCP hosts are active** — Knapper permits one operation at a time. Use `obsidian_status` to see the owner state and retry interval.
 - **Every CLI call fails with `Cannot find module 'electron'`** — something set `ELECTRON_RUN_AS_NODE=1` in the environment knapper inherited, which makes the Obsidian binary start as a bare Node process. Electron-based MCP clients (Claude Code, Cursor, VS Code, Claude Desktop) set it for their child processes. knapper strips it before spawning, so if you still see this, a wrapper script or shell profile is re-adding it downstream.
 - **Unavailable `browser_*` calls** — enabled browser tools stay visible when Obsidian is offline. The call returns `CDP_PORT_CLOSED` with `obsidian_launch` remediation. Cold-start Obsidian with the debug port, then retry the same tool.
 - **`VAULT_NOT_FOUND`** — vault name not in the `obsidian.json` registry.
-- **`SESSION_NOT_FOUND`** — the selected workspace expired or its internal instance no longer exists. Create a new isolated workspace. Knapper never falls back to the default profile.
+- **`SESSION_NOT_FOUND`** — the managed session no longer exists. Call `obsidian_session_open` to create it again. Knapper never falls back to the default profile.
 - **Stale UI refs** — `STALE_REF`; take a new `browser_snapshot`.
 - **Linux wrappers** — single-dash tokens in `user-flags.conf` break every CLI call.
 
@@ -435,12 +399,12 @@ npm run acceptance   # fast gate over the critical seams
 npm run e2e          # deep end-to-end: vault round-trips, UI, telemetry, dev cycle
 npm run fence        # refusals against a genuinely unauthorized vault
 npm run bg-input     # input delivery while Obsidian is not the focused window
-npm run workspaces   # isolated instances, reconnect, scoped restart, quarantine
+npm run workspaces   # session ownership, reconnect, restart, quarantine
 ```
 
 The suites do not need a pre-launched Obsidian instance or an existing scratch
 vault. They verify registry preservation and safe cleanup. Run `npm run workspaces`
-for changes to `src/session/`, workspace leases, or process-scoping predicates.
+for changes to `src/session/`, session ownership, or process-scoping predicates.
 
 `npm run bg-input` is only meaningful when Obsidian is not the foreground window.
 Run it without clicking the private Obsidian window.
@@ -477,15 +441,15 @@ npm run versions:check   # CI gate: fail on drift
 same flow as anything else:
 
 ```bash
-git checkout -b release/v0.6.0-beta.7 dev
-npm version 0.6.0-beta.7 --no-git-tag-version && npm run versions:sync
+git checkout -b release/v0.7.0-beta.1 dev
+npm version 0.7.0-beta.1 --no-git-tag-version && npm run versions:sync
 # PR into dev, then promote dev -> master
 ```
 
 Once the promotion PR merges, cut the release either way:
 
 - **From the Actions tab** — run the _Release_ workflow. It tags master's current HEAD with the version already in `package.json`, packs the tarball, and creates the GitHub Release with that tarball attached. Tick _dry run_ to rehearse. It refuses if that version is already tagged.
-- **From a tag** — `git tag -s v0.6.0-beta.7 && git push origin v0.6.0-beta.7`.
+- **From a tag** — `git tag -s v0.7.0-beta.1 && git push origin v0.7.0-beta.1`.
 
 Either way the workflow refuses to release a commit that is not on `master`, or a
 tag that disagrees with `package.json`. It never pushes commits to `master`, which

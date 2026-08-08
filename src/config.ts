@@ -42,11 +42,6 @@ export interface Config {
   httpPort: number;
   /** Listen host for the http transport. Non-loopback values are warned about. */
   httpHost: string;
-  /**
-   * How many tool calls may run at once. UI mutations are serialized regardless;
-   * this caps the read-only calls that are safe to overlap.
-   */
-  maxConcurrency: number;
   enabledToolsets: Set<Toolset>;
   unknownToolsets: string[];
   logLevel: LogLevel;
@@ -62,8 +57,10 @@ export interface Config {
   outputDir: string;
   /** Timeout for a single Obsidian CLI invocation, in ms. */
   cliTimeoutMs: number;
-  /** Idle grace for default-profile ownership and disconnected sessions. */
+  /** Idle grace before inactive managed sessions are eligible for cleanup. */
   idleTimeoutMs: number;
+  /** Recent-activity window that prevents a second agent from taking the single target. */
+  activityIdleMs: number;
   /** Transport preference for renderer commands that both CLI and CDP can serve. */
   commandTransport: CommandTransport;
   /** Session key when this server is bound to one, else undefined. */
@@ -106,7 +103,6 @@ export interface ConfigOverrides {
   transport?: string;
   httpPort?: number;
   httpHost?: string;
-  maxConcurrency?: number;
   toolsets?: string;
   logLevel?: string;
   telemetryBuffer?: number;
@@ -115,6 +111,7 @@ export interface ConfigOverrides {
   outputDir?: string;
   cliTimeoutMs?: number;
   commandTransport?: string;
+  activityIdleMs?: number;
   sessionId?: string;
   userDataDir?: string;
   runtimeDir?: string;
@@ -181,16 +178,6 @@ export function sessionsDir(env: NodeJS.ProcessEnv = process.env): string {
   return join(knapperHome(env), "sessions");
 }
 
-/** Durable explicit agent handles used by stateless MCP clients. */
-export function agentsDir(env: NodeJS.ProcessEnv = process.env): string {
-  return join(knapperHome(env), "agents");
-}
-
-/** Explicit workspace-handle records. The records never contain vault content. */
-export function workspacesDir(env: NodeJS.ProcessEnv = process.env): string {
-  return join(knapperHome(env), "workspaces");
-}
-
 /** Recoverable session roots awaiting an explicit purge. */
 export function trashDir(env: NodeJS.ProcessEnv = process.env): string {
   return join(knapperHome(env), "trash");
@@ -203,16 +190,6 @@ export function sessionRoot(key: string, env: NodeJS.ProcessEnv = process.env): 
 /** Lock guarding session create/close/reap across knapper processes. */
 export function registryLockPath(env: NodeJS.ProcessEnv = process.env): string {
   return join(knapperHome(env), "registry.lock");
-}
-
-/** Short coordination lock for atomic default-profile lease updates. */
-export function defaultProfileLeaseLockPath(env: NodeJS.ProcessEnv = process.env): string {
-  return join(knapperHome(env), "default-profile-lease.lock");
-}
-
-/** Ownership record for the installation's default Obsidian profile. */
-export function defaultProfileLeasePath(env: NodeJS.ProcessEnv = process.env): string {
-  return join(knapperHome(env), "default-profile-lease.json");
 }
 
 /** Per-session directory layout. The only place these names are spelled. */
@@ -353,10 +330,6 @@ export function loadConfig(overrides: ConfigOverrides = {}, env = process.env): 
     transport,
     httpPort: overrides.httpPort ?? numberFrom(env.MCP_PORT, 9223),
     httpHost: overrides.httpHost ?? env.MCP_HOST ?? "127.0.0.1",
-    maxConcurrency: Math.max(
-      1,
-      overrides.maxConcurrency ?? numberFrom(env.KNAP_MAX_CONCURRENCY, 4),
-    ),
     enabledToolsets: enabled,
     unknownToolsets: unknown,
     logLevel,
@@ -371,6 +344,10 @@ export function loadConfig(overrides: ConfigOverrides = {}, env = process.env): 
       join(process.cwd(), ".knapper"),
     cliTimeoutMs: overrides.cliTimeoutMs ?? numberFrom(env.KNAP_CLI_TIMEOUT_MS, 15_000),
     idleTimeoutMs: Math.max(30_000, numberFrom(env.KNAP_IDLE_TIMEOUT_MS, 24 * 60 * 60_000)),
+    activityIdleMs: Math.max(
+      30_000,
+      overrides.activityIdleMs ?? numberFrom(env.KNAP_ACTIVITY_IDLE_MS, 5 * 60_000),
+    ),
     commandTransport: commandTransportFrom(
       overrides.commandTransport ?? env.KNAP_COMMAND_TRANSPORT,
     ),

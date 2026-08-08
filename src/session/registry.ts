@@ -52,7 +52,6 @@ import {
 
 export interface CreateSessionOptions {
   label?: string;
-  agentHandle?: string;
   pluginSourceDir?: string;
   pluginId?: string;
   cdpPort?: number;
@@ -82,7 +81,7 @@ interface ReadinessContext {
   identityRemediation: string;
   pluginFailure: (pluginId: string) => string;
   pluginRemediation: string;
-  fixedBy: "obsidian_workspace_create" | "obsidian_workspace_restart";
+  fixedBy: "obsidian_session_open" | "obsidian_session_reset";
   degradedWarning: string;
   onPluginUpdate?: (plugin: NonNullable<SessionDescriptor["plugin"]>) => void;
 }
@@ -171,11 +170,11 @@ async function verifyRestartReadiness(
       ...(descriptor.plugin !== undefined ? { plugin: descriptor.plugin } : {}),
       identityFailure: `Session ${descriptor.key} could not prove its private-profile visual identity after restart.`,
       identityRemediation:
-        "Review the launch logs and desktop integration, then restart the workspace.",
+        "Review the launch logs and desktop integration, then reset the session.",
       pluginFailure: (pluginId) =>
         `Plugin "${pluginId}" did not become installed, enabled, and loaded after restart.`,
-      pluginRemediation: "Review the plugin manifest and launch logs, then restart the workspace.",
-      fixedBy: "obsidian_workspace_restart",
+      pluginRemediation: "Review the plugin manifest and launch logs, then reset the session.",
+      fixedBy: "obsidian_session_reset",
       degradedWarning: "private session visual identity is degraded after restart",
     },
     logger,
@@ -268,7 +267,6 @@ async function createSessionUnlocked(opts: CreateSessionOptions): Promise<Sessio
         ...(opts.branch !== undefined ? { branch: opts.branch } : {}),
         label,
       },
-      ...(opts.agentHandle !== undefined ? { agentHandle: opts.agentHandle } : {}),
       ownership: {
         rootPath: await realpath(paths.root),
         vaultPath: await realpath(seeded.vault.path),
@@ -307,12 +305,12 @@ async function createSessionUnlocked(opts: CreateSessionOptions): Promise<Sessio
         ...(plugin !== undefined ? { plugin } : {}),
         identityFailure: `Session ${key} could not prove its private-profile visual identity.`,
         identityRemediation:
-          "Review the launch logs and desktop integration, then create a new workspace.",
+          "Review the launch logs and desktop integration, then reset the session.",
         pluginFailure: (pluginId) =>
           `Plugin "${pluginId}" did not become installed, enabled, and loaded.`,
         pluginRemediation:
-          "Review the plugin manifest and launch logs, then create a new workspace after fixing the plugin.",
-        fixedBy: "obsidian_workspace_create",
+          "Review the plugin manifest and launch logs, then reset the session after fixing the plugin.",
+        fixedBy: "obsidian_session_reset",
         degradedWarning: "private session visual identity is degraded",
         onPluginUpdate: (updated) => {
           plugin = updated;
@@ -366,8 +364,8 @@ async function createSessionUnlocked(opts: CreateSessionOptions): Promise<Sessio
       await writeDescriptor(failed, env);
       throw new UobError("SESSION_NOT_RUNNING", `Session ${key} failed to start.`, {
         remediation:
-          "Review the launch details, then retry obsidian_workspace_create. Knapper retains the failed scratch descriptor for diagnosis.",
-        fixedBy: "obsidian_workspace_create",
+          "Review the launch details, then retry obsidian_session_open. Knapper retains the failed scratch descriptor for diagnosis.",
+        fixedBy: "obsidian_session_open",
         details: {
           session: key,
           launchError: e.toJSON(),
@@ -425,7 +423,7 @@ export async function waitSession(
   if (descriptor.readiness.phase === "stopped") {
     throw new UobError("SESSION_NOT_RUNNING", `Session ${key} is stopped.`, {
       remediation: "Restart the session before you use it.",
-      fixedBy: "obsidian_workspace_restart",
+      fixedBy: "obsidian_session_reset",
       details: { session: key },
     });
   }
@@ -485,8 +483,8 @@ export async function waitSession(
 
   throw new UobError("TIMEOUT", `Session ${key} is still starting.`, {
     remediation:
-      "Retry obsidian_workspace_create after checking the launch diagnostics. Knapper cleans up the failed workspace before it returns the error.",
-    fixedBy: "obsidian_workspace_create",
+      "Retry obsidian_session_open after checking the launch diagnostics. Knapper cleans up the failed session before it returns the error.",
+    fixedBy: "obsidian_session_open",
     details: await sessionDiagnostics(descriptor),
   });
 }
@@ -694,7 +692,7 @@ async function restartSessionUnlocked(
       const failed = await requireDescriptor(key, env);
       throw new UobError("SESSION_NOT_RUNNING", `Session ${key} failed to restart.`, {
         remediation: "Review the launch details, then restart or close the session.",
-        fixedBy: "obsidian_workspace_restart",
+        fixedBy: "obsidian_session_reset",
         details: {
           session: key,
           launchError: error.toJSON(),
@@ -834,8 +832,8 @@ export async function quarantineSessionUnlocked(
 async function refuseLiveCleanup(descriptor: SessionDescriptor): Promise<void> {
   if ((await findObsidianPids(scopeOf(descriptor))).length === 0) return;
   throw new UobError("INVALID_ARGUMENT", `Session ${descriptor.key} is still running.`, {
-    remediation: "Stop the workspace, then retry this operation.",
-    fixedBy: "obsidian_workspace_stop",
+    remediation: "Reset the managed session, then retry this operation.",
+    fixedBy: "obsidian_session_reset",
     details: {
       session: descriptor.key,
       userDataDir: descriptor.instance.userDataDir,
@@ -1025,8 +1023,8 @@ async function requireDescriptor(key: string, env: NodeJS.ProcessEnv): Promise<S
   const descriptor = await readDescriptor(key, env);
   if (descriptor === undefined) {
     throw new UobError("SESSION_NOT_FOUND", `No knapper session named "${key}".`, {
-      remediation: "List durable workspace handles with obsidian_workspace_list.",
-      fixedBy: "obsidian_workspace_list",
+      remediation: "Inspect the managed session with obsidian_session_status.",
+      fixedBy: "obsidian_session_status",
       details: { session: key },
     });
   }

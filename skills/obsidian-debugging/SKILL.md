@@ -1,12 +1,12 @@
 ---
 name: obsidian-debugging
-description: Debug Obsidian plugins with knapper telemetry: cursor-based obsidian_logs tailing, obsidian_log_mark brackets, console and network capture, and error attribution from stack frames. Use after reloads, UI exercises, or mysterious plugin onload failures.
+description: "Debug Obsidian plugins with knapper telemetry: cursor-based obsidian_logs tailing, obsidian_log_mark brackets, console and network capture, and error attribution from stack frames. Use after reloads, UI exercises, or mysterious plugin onload failures."
 ---
 
 # Obsidian debugging with telemetry
 
-Telemetry tools need a workspace handle and a live Obsidian window. Pass
-`workspaceHandle` on every telemetry call. CDP provides capture hooks.
+Telemetry tools need an active Knapper session and a live Obsidian window. Knapper
+selects the active target for every telemetry call. CDP provides capture hooks.
 
 ## The core primitive: cursor tailing
 
@@ -17,10 +17,10 @@ This is the reliable answer to: _“What happened because of what I just did?”
 ### Pattern
 
 ```text
-obsidian_log_mark(workspaceHandle=<workspaceHandle>, label="before-reload")
-obsidian_plugin_reload(workspaceHandle=<workspaceHandle>, id="my-plugin")
+obsidian_log_mark(label="before-reload")
+obsidian_plugin_reload(id="my-plugin")
 # … reproduce issue …
-obsidian_logs(workspaceHandle=<workspaceHandle>, since=<cursor from mark or prior logs call>)
+obsidian_logs(since=<cursor from mark or prior logs call>)
 ```
 
 1. Note cursor **before** the action (from `obsidian_log_mark` or a prior `obsidian_logs`).

@@ -17,19 +17,11 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { createDisposableWorkspace, createLiveHome, removeLiveHome } from "./lib/live-harness.mjs";
+import { stopSession } from "../dist/session/registry.js";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 let AUTHORIZED;
 let UNAUTHORIZED;
-const CONTROL_TOOLS = new Set([
-  "obsidian_agent_open",
-  "obsidian_agent_close",
-  "obsidian_workspace_claim_default",
-  "obsidian_workspace_stop",
-  "obsidian_workspace_release",
-]);
-let agentHandle;
-let workspaceHandle;
 
 class McpClient {
   #child;
@@ -82,11 +74,7 @@ class McpClient {
   }
 
   async call(name, args = {}) {
-    const input =
-      workspaceHandle !== undefined && !CONTROL_TOOLS.has(name)
-        ? { ...args, workspaceHandle }
-        : args;
-    const res = await this.send("tools/call", { name, arguments: input });
+    const res = await this.send("tools/call", { name, arguments: args });
     if (res.error) throw new Error(`${name}: ${res.error.message}`);
     const text = (res.result?.content ?? []).map((c) => c.text ?? "").join("\n");
     return {
@@ -133,8 +121,6 @@ function assertFenced(result, what) {
 }
 
 console.log("\n\x1b[1m=== knapper vault fence — live ===\x1b[0m");
-console.log(`authorized:   ${AUTHORIZED}`);
-console.log(`unauthorized: ${UNAUTHORIZED}\n`);
 
 const liveHome = await createLiveHome("knapper-fence-");
 const client = new McpClient(["--toolsets", "all"], liveHome.env);
@@ -149,8 +135,6 @@ try {
     agentLabel: "fence-live",
     label: "fence-authorized-scratch",
   });
-  agentHandle = isolated.agentHandle;
-  workspaceHandle = isolated.workspaceHandle;
   AUTHORIZED = isolated.session.vault?.name;
   assert(typeof AUTHORIZED === "string", "isolated workspace has no vault identity");
 
@@ -164,9 +148,14 @@ try {
     code: `localStorage.setItem(${JSON.stringify(`enable-plugin-${unauthorizedVaultId}`)}, "true")`,
   });
   assert(!trustedIdentity.isError, `identity trust seed failed: ${trustedIdentity.text}`);
-  const stoppedForSeed = await client.call("obsidian_workspace_stop", { workspaceHandle });
-  assert(!stoppedForSeed.isError, `workspace stop failed: ${stoppedForSeed.text}`);
+  const stoppedForSeed = await stopSession(isolated.session.key, { env: liveHome.env });
+  assert(
+    stoppedForSeed.state !== "quitFailed",
+    "session stop failed while preparing fence fixture",
+  );
   UNAUTHORIZED = `${AUTHORIZED}-unauthorized`;
+  console.log(`authorized:   ${AUTHORIZED}`);
+  console.log(`unauthorized: ${UNAUTHORIZED}\n`);
   const unauthorizedPath = join(dirname(isolated.vaultPath), UNAUTHORIZED);
   await mkdir(join(unauthorizedPath, ".obsidian"), { recursive: true, mode: 0o700 });
   const { SESSION_IDENTITY_PLUGIN_ID, seedSessionIdentityPlugin } = await import(
@@ -195,7 +184,7 @@ try {
     open: true,
   };
   await writeFile(registryPath, `${JSON.stringify(privateRegistry, null, 2)}\n`, "utf8");
-  const restartedAfterSeed = await client.call("obsidian_workspace_restart", { workspaceHandle });
+  const restartedAfterSeed = await client.call("obsidian_session_open", { target: "isolated" });
   assert(!restartedAfterSeed.isError, `workspace restart failed: ${restartedAfterSeed.text}`);
 
   console.log("Preconditions");
@@ -345,15 +334,7 @@ try {
     );
   });
 } finally {
-  if (workspaceHandle !== undefined) {
-    await client.call("obsidian_workspace_stop", { workspaceHandle }).catch(() => undefined);
-    await client.call("obsidian_workspace_release", { workspaceHandle }).catch(() => undefined);
-    workspaceHandle = undefined;
-  }
-  if (agentHandle !== undefined) {
-    await client.call("obsidian_agent_close", { agentHandle }).catch(() => undefined);
-    agentHandle = undefined;
-  }
+  await client.call("obsidian_session_release").catch(() => undefined);
   client.close();
   await removeLiveHome(liveHome.home).catch(() => undefined);
 }

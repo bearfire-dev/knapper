@@ -11,9 +11,9 @@ Diagnose why knapper cannot talk to Obsidian and fix each layer explicitly.
    - `CDP_PORT_CLOSED` → quit Obsidian completely, then `obsidian_launch` (single-instance lock)
    - `ARGV_CORRUPTION` → edit `user-flags.conf` to use `--` prefixes
    - `VAULT_NOT_FOUND` → fix `OBSIDIAN_VAULT` or register the vault in Obsidian
-3. Call **`obsidian_status`** to confirm transports and toolsets.
+3. Call **`obsidian_status`** to confirm transports and the session owner state.
 4. If CDP is still missing, verify nothing else holds port `9222` and that `OBSIDIAN_CDP_URL` matches your launch flags.
 
 ## Reference
 
-Use skill **obsidian-instance-setup** for transport tradeoffs and multi-window attach (`obsidian_list_targets`, `obsidian_attach`).
+Use skill **obsidian-instance-setup** for session lifecycle and multi-window attach (`obsidian_list_targets`, `obsidian_attach`).

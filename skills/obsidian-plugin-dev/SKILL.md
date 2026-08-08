@@ -5,12 +5,11 @@ description: Build, link, reload, and verify Obsidian plugins against a live des
 
 # Obsidian plugin development loop
 
-Enable `core`, `workspace`, `telemetry`, and `plugin-dev` with
-`obsidian_toolsets_update`. To preview the update, first call it with `dryRun: true`.
-Then, repeat the call without `dryRun`. The workspace setup below returns a
-`workspaceHandle`. Pass this handle to each operational tool.
+Knapper publishes the core, session, telemetry, plugin, UI, editor, and vault tools
+during MCP initialization. Do not change the tool list after startup. Operational
+tools use the active session and accept no caller-owned session identifiers.
 
-For plugin work, create an isolated workspace with `pluginSourceDir` and
+For plugin work, open a private session with `pluginSourceDir` and
 `pluginId`. If `visualIdentity.state` is `degraded`, read `visualIdentity.warnings`
 array. This warning does not disable the private-session routing.
 
@@ -25,13 +24,12 @@ Obsidian plugin work is a tight loop:
 
 The composite tool `obsidian_dev_cycle` runs steps 3–4 in one call after you have built locally.
 
-## One-time workspace setup
+## One-time session setup
 
-For a dedicated development workspace:
+For a dedicated development session:
 
-1. Call `obsidian_agent_open`.
-2. Call `obsidian_workspace_create` with the loadable plugin directory and ID.
-3. Check `obsidian_plugin_health` before you modify plugin state.
+1. Call `obsidian_session_open` with the loadable plugin directory and ID.
+2. Check `obsidian_plugin_health` before you modify plugin state.
 
 ### `obsidian_link_plugin`
 
@@ -47,7 +45,7 @@ After linking, enable the plugin once in Obsidian if it is not already enabled (
 Call after every code change you want to validate:
 
 ```text
-obsidian_dev_cycle(workspaceHandle=<workspaceHandle>, pluginId="my-plugin", openPath="Notes/Smoke.md", waitMs=1500)
+obsidian_dev_cycle(pluginId="my-plugin", openPath="Notes/Smoke.md", waitMs=1500)
 ```
 
 What it does:
@@ -115,13 +113,13 @@ window.myPluginProbe = async () => ({ settings: this.settings, widgetCount: this
 Run it through `obsidian_eval`:
 
 ```text
-obsidian_eval workspaceHandle=<workspaceHandle> code=JSON.stringify(await window.myPluginProbe())
+obsidian_eval code=JSON.stringify(await window.myPluginProbe())
 ```
 
 Keep the call on one line. The Playwright transport awaits the promise for you. Also mirror the result to the console as an overflow channel — a large payload then stays readable through `obsidian_logs`:
 
 ```text
-obsidian_eval workspaceHandle=<workspaceHandle> code=(async () => { const r = await window.myPluginProbe(); console.log("probe:", JSON.stringify(r)); return JSON.stringify(r); })()
+obsidian_eval code=(async () => { const r = await window.myPluginProbe(); console.log("probe:", JSON.stringify(r)); return JSON.stringify(r); })()
 ```
 
 For editor-rendering plugins, pair the probe with the editor toolset:
@@ -134,20 +132,17 @@ For editor-rendering plugins, pair the probe with the editor toolset:
 
 `obsidian_reset_state` disables the plugin, resets `data.json` to `{}`, re-enables, and returns the previous settings JSON so you can restore them. Destructive — use only on dev vaults.
 
-Do not call `obsidian_create_vault` for an isolated workspace. The tool refuses a
-session-bound request. Use the scratch vault from `obsidian_workspace_create`.
+Do not call `obsidian_create_vault` for a private session. Use the scratch vault
+from `obsidian_session_open`.
 
 ## Checklist for a new plugin repo
 
-1. `obsidian_agent_open` — create the attribution handle.
-2. `obsidian_workspace_create` — create scratch space and link the loadable build.
-3. `obsidian_plugin_health` — confirm present, enabled, and loaded state.
-4. `obsidian_plugin_enable` if needed.
-5. Iterate: **build → `obsidian_dev_cycle`**.
-6. Use `obsidian_exercise_command` for command-centric features.
-7. Call `obsidian_workspace_stop` after testing.
-8. Call `obsidian_workspace_destroy` to move the scratch root to recoverable trash.
-9. Close the agent handle.
+1. `obsidian_session_open` — create scratch space and link the loadable build.
+2. `obsidian_plugin_health` — confirm present, enabled, and loaded state.
+3. `obsidian_plugin_enable` if needed.
+4. Iterate: **build → `obsidian_dev_cycle`**.
+5. Use `obsidian_exercise_command` for command-centric features.
+6. Call `obsidian_session_release` after testing.
 
 ## Related skills
 

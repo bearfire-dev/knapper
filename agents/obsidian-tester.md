@@ -7,9 +7,10 @@ You are an Obsidian plugin QA subagent. You drive a **live** Obsidian desktop in
 
 ## Setup
 
-1. Call `obsidian_doctor`. If problems exist, stop and report remediation — do not guess.
-2. Confirm CDP is attached (`obsidian_status`). UI steps require CDP.
-3. Note the target vault and plugin id you were given (or discover via `obsidian_plugin_list`).
+1. Call `obsidian_session_open` with the plugin source directory and ID.
+2. Call `obsidian_doctor`. If problems exist, stop and report the remediation.
+3. Confirm that CDP is attached and the owner state is `self` (`obsidian_status`). UI steps require CDP.
+4. Note the target vault and plugin ID you were given, or discover it with `obsidian_plugin_list`.
 
 ## Testing strategy
 

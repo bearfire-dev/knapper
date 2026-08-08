@@ -23,15 +23,6 @@ import { createDisposableWorkspace, createLiveHome, removeLiveHome } from "./lib
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 let VAULT;
-const CONTROL_TOOLS = new Set([
-  "obsidian_agent_open",
-  "obsidian_agent_close",
-  "obsidian_workspace_claim_default",
-  "obsidian_workspace_stop",
-  "obsidian_workspace_release",
-]);
-let agentHandle;
-let workspaceHandle;
 const execFileAsync = promisify(execFile);
 
 const activeDesktopWindow = async () => {
@@ -96,11 +87,7 @@ class McpClient {
   }
 
   async call(name, args = {}) {
-    const input =
-      workspaceHandle !== undefined && !CONTROL_TOOLS.has(name)
-        ? { ...args, workspaceHandle }
-        : args;
-    const res = await this.send("tools/call", { name, arguments: input });
+    const res = await this.send("tools/call", { name, arguments: args });
     if (res.error) throw new Error(`${name}: ${res.error.message}`);
     const text = (res.result?.content ?? []).map((c) => c.text ?? "").join("\n");
     return {
@@ -148,8 +135,6 @@ const closePalette = async (client) => {
 };
 
 console.log("\n\x1b[1m=== knapper background input — live ===\x1b[0m");
-console.log(`vault: ${VAULT}`);
-console.log("Do NOT click into Obsidian while this runs.\n");
 
 const liveHome = await createLiveHome("knapper-bg-input-");
 const client = new McpClient(["--toolsets", "all"], liveHome.env);
@@ -163,10 +148,10 @@ const isolated = await createDisposableWorkspace(client, root, {
   agentLabel: "bg-input-live",
   label: "background-input-scratch",
 });
-agentHandle = isolated.agentHandle;
-workspaceHandle = isolated.workspaceHandle;
 VAULT = isolated.session.vault?.name;
 assert(typeof VAULT === "string", "isolated workspace has no vault identity");
+console.log(`vault: ${VAULT}`);
+console.log("Do NOT click into Obsidian while this runs.\n");
 const foregroundBefore = await activeDesktopWindow();
 
 console.log("Preconditions");
@@ -243,13 +228,10 @@ await check("an unpaired browser_keydown is released during MCP shutdown", async
       capabilities: {},
       clientInfo: { name: "bg-input-live-2", version: "1" },
     });
-    const stopped = await after.call("obsidian_workspace_stop", { workspaceHandle });
-    assert(!stopped.isError, `workspace stop failed: ${stopped.text}`);
-    const released = await after.call("obsidian_workspace_release", { workspaceHandle });
+    const reopened = await after.call("obsidian_session_open", { target: "isolated" });
+    assert(!reopened.isError, `session reopen failed: ${reopened.text}`);
+    const released = await after.call("obsidian_session_release");
     assert(!released.isError, `workspace release failed: ${released.text}`);
-    workspaceHandle = undefined;
-    const closed = await after.call("obsidian_agent_close", { agentHandle });
-    assert(!closed.isError, `agent close failed: ${closed.text}`);
   } finally {
     after.close();
     await removeLiveHome(liveHome.home);

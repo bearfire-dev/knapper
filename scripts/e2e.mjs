@@ -35,23 +35,6 @@ let VAULT_DIR;
 const PLUGIN = process.env.PLUGIN_ID;
 /** All notes this suite writes live here so cleanup is a single recursive delete. */
 const E2E_DIR = "E2E";
-const CONTROL_TOOLS = new Set([
-  "obsidian_agent_open",
-  "obsidian_agent_status",
-  "obsidian_agent_close",
-  "obsidian_workspace_create",
-  "obsidian_workspace_claim_default",
-  "obsidian_workspace_list",
-  "obsidian_workspace_status",
-  "obsidian_workspace_stop",
-  "obsidian_workspace_restart",
-  "obsidian_workspace_release",
-  "obsidian_workspace_destroy",
-  "obsidian_toolsets",
-  "obsidian_tool_catalog",
-]);
-let defaultAgentHandle;
-let defaultWorkspaceHandle;
 
 const onlyArg = process.argv.indexOf("--only");
 const ONLY = onlyArg === -1 ? undefined : process.argv[onlyArg + 1];
@@ -135,11 +118,7 @@ class McpClient {
   }
 
   async call(name, args = {}) {
-    const input =
-      defaultWorkspaceHandle !== undefined && !CONTROL_TOOLS.has(name)
-        ? { ...args, workspaceHandle: defaultWorkspaceHandle }
-        : args;
-    const res = await this.send("tools/call", { name, arguments: input });
+    const res = await this.send("tools/call", { name, arguments: args });
     if (res.error) throw new Error(`${name}: ${res.error.message}`);
     const content = res.result?.content ?? [];
     const text = content
@@ -251,13 +230,10 @@ try {
   const init = await client.initialize();
   const isolated = await createDisposableWorkspace(client, root, {
     home: liveHome.home,
-    agentLabel: "e2e",
     label: "e2e-scratch",
     ...(process.env.PLUGIN_SOURCE_DIR ? { pluginSourceDir: process.env.PLUGIN_SOURCE_DIR } : {}),
     ...(process.env.PLUGIN_ID ? { pluginId: process.env.PLUGIN_ID } : {}),
   });
-  defaultAgentHandle = isolated.agentHandle;
-  defaultWorkspaceHandle = isolated.workspaceHandle;
   VAULT = isolated.session.vault?.name;
   VAULT_DIR = isolated.vaultPath;
   assert(typeof VAULT === "string", "isolated workspace has no vault identity");
@@ -401,9 +377,9 @@ try {
     await check("toolset inspection does not mutate the runtime surface", async () => {
       const before = await client.send("tools/list");
       const beforeSurface = JSON.stringify(before.result.tools);
-      const report = await client.ok("obsidian_toolsets");
+      const report = await client.ok("obsidian_session_status");
       const after = await client.send("tools/list");
-      assert(Array.isArray(report.json?.enabled), "toolset report omitted the enabled set");
+      assert(report.json?.active, "session status omitted the active session");
       assert(beforeSurface === JSON.stringify(after.result.tools), "tools/list changed at runtime");
     });
   }
@@ -747,22 +723,15 @@ try {
   if (suite("Editor toolset")) {
     const note = `${E2E_DIR}/editor.md`;
 
-    await check("the default surface stays slim", async () => {
+    await check("the default surface is fixed at initialization", async () => {
       const dflt = new McpClient([], liveHome.env);
       try {
         await dflt.initialize();
         const res = await dflt.send("tools/list");
         const have = new Set(res.result.tools.map((t) => t.name));
-        const wanted = ["obsidian_status", "obsidian_workspace_create", "obsidian_toolsets_update"];
+        const wanted = ["obsidian_status", "obsidian_session_open", "browser_snapshot"];
         const missing = wanted.filter((name) => !have.has(name));
-        const leaked = ["obsidian_editor_state", "obsidian_create", "browser_snapshot"].filter(
-          (name) => have.has(name),
-        );
         assert(missing.length === 0, `missing from default surface: ${missing.join(", ")}`);
-        assert(
-          leaked.length === 0,
-          `optional tools leaked into default surface: ${leaked.join(", ")}`,
-        );
       } finally {
         dflt.close();
       }
@@ -983,17 +952,42 @@ try {
       await client.ok("obsidian_plugin_disable", { id: PLUGIN });
       await sleep(500);
       const off = await client.ok("obsidian_plugin_health", { pluginId: PLUGIN });
-      assert(/false|disabled|not (enabled|loaded)/i.test(off.text), "still reported enabled");
+      assert(off.json?.enabled === false && off.json?.loaded === false, "still reported enabled");
       await client.ok("obsidian_plugin_enable", { id: PLUGIN });
       await sleep(800);
       const on = await client.ok("obsidian_plugin_health", { pluginId: PLUGIN });
-      assert(/enabled|loaded/i.test(on.text), "did not come back enabled");
+      assert(on.json?.enabled === true && on.json?.loaded === true, "did not come back enabled");
     });
 
     await check("plugin settings read and write data.json", async () => {
       const { isError } = await client.call("obsidian_plugin_settings", { id: PLUGIN });
       assert(!isError, "settings read errored");
     });
+
+    if (PLUGIN === "knapper-settings-fixture") {
+      await check("plugin settings change through the live UI", async () => {
+        await client.ok("obsidian_eval", {
+          code: `app.setting.open(); app.setting.openTabById(${JSON.stringify(PLUGIN)}); true`,
+        });
+        await sleep(500);
+        const snapshot = await client.ok("obsidian_snapshot", { scope: "settings" });
+        assert(/Enable fixture/.test(snapshot.text), "fixture setting is not visible");
+        await client.ok("browser_click", {
+          target: ".knapper-settings-fixture input[type=checkbox]",
+          element: "Enable fixture toggle",
+        });
+        const enabled = await waitFor(
+          async () => {
+            const result = await client.ok("obsidian_eval", {
+              code: `app.plugins.plugins[${JSON.stringify(PLUGIN)}]?.settings?.enabled === true`,
+            });
+            return /true/.test(result.text);
+          },
+          { what: "the live setting to persist", timeoutMs: 5000 },
+        );
+        assert(enabled, "the fixture setting did not change");
+      });
+    }
 
     await check("reset_state wipes data.json and returns the previous contents", async () => {
       const { text, isError } = await client.call("obsidian_reset_state", { pluginId: PLUGIN });
@@ -1082,8 +1076,8 @@ try {
 
   // --------------------------------------------------- suite: stability additions
 
-  if (suite("Stability: concurrency, transport, reconnect")) {
-    await check("overlapping read-only calls all succeed", async () => {
+  if (suite("Stability: single lane, transport, reconnect")) {
+    await check("simultaneous calls complete through the FIFO lane", async () => {
       const results = await Promise.all([
         client.call("obsidian_status"),
         client.call("obsidian_files", {}),
@@ -1093,11 +1087,11 @@ try {
         client.call("obsidian_list_targets"),
       ]);
       const bad = results.filter((r) => r.isError);
-      assert(bad.length === 0, `${bad.length} of ${results.length} concurrent reads failed`);
-      return `${results.length} parallel reads`;
+      assert(bad.length === 0, `${bad.length} of ${results.length} queued calls failed`);
+      return `${results.length} queued calls`;
     });
 
-    await check("overlapping mutating calls serialize without corrupting each other", async () => {
+    await check("queued mutations cannot corrupt each other", async () => {
       const dir = `${E2E_DIR}/conc`;
       const n = 5;
       const results = await Promise.all(
@@ -1110,8 +1104,8 @@ try {
         ),
       );
       const bad = results.filter((r) => r.isError);
-      assert(bad.length === 0, `${bad.length}/${n} concurrent creates failed`);
-      // Every file must exist with exactly its own body — interleaving would cross them.
+      assert(bad.length === 0, `${bad.length}/${n} queued creates failed`);
+      // Every file must exist with exactly its own body.
       for (let i = 0; i < n; i++) {
         const rel = `${dir}/note-${i}.md`;
         await waitFor(() => fileExists(rel), { what: rel });
@@ -1121,7 +1115,7 @@ try {
       return `${n} serialized writes`;
     });
 
-    await check("a mixed read/write burst leaves the server responsive", async () => {
+    await check("a mixed queue leaves the server responsive", async () => {
       await Promise.all([
         client.call("obsidian_status"),
         client.call("obsidian_notice", { message: "burst", duration: 400 }),
@@ -1130,7 +1124,7 @@ try {
         client.call("obsidian_logs", { limit: 3 }),
       ]);
       const { isError } = await client.call("obsidian_status");
-      assert(!isError, "server unresponsive after a mixed burst");
+      assert(!isError, "server unresponsive after a mixed queue");
     });
 
     await check("http transport serves a real MCP handshake", async () => {
@@ -1291,36 +1285,12 @@ try {
     });
   }
 
-  await check("default workspace and agent handles close cleanly", async () => {
-    await client.ok("obsidian_workspace_stop", { workspaceHandle: defaultWorkspaceHandle });
-    const released = await client.ok("obsidian_workspace_release", {
-      workspaceHandle: defaultWorkspaceHandle,
-    });
-    assert(released.json?.released === true, "default workspace was not released");
-    defaultWorkspaceHandle = undefined;
-    const closed = await client.ok("obsidian_agent_close", { agentHandle: defaultAgentHandle });
-    assert(closed.json?.closed === true, "agent handle was not closed");
-    defaultAgentHandle = undefined;
+  await check("the active session releases cleanly", async () => {
+    const released = await client.ok("obsidian_session_release");
+    assert(released.json?.released, "active session was not released");
   });
-
-  client.close();
-  await removeLiveHome(liveHome.home);
 } finally {
-  if (defaultWorkspaceHandle !== undefined) {
-    await client
-      .call("obsidian_workspace_stop", { workspaceHandle: defaultWorkspaceHandle })
-      .catch(() => undefined);
-    await client
-      .call("obsidian_workspace_release", { workspaceHandle: defaultWorkspaceHandle })
-      .catch(() => undefined);
-    defaultWorkspaceHandle = undefined;
-  }
-  if (defaultAgentHandle !== undefined) {
-    await client
-      .call("obsidian_agent_close", { agentHandle: defaultAgentHandle })
-      .catch(() => undefined);
-    defaultAgentHandle = undefined;
-  }
+  await client.call("obsidian_session_release").catch(() => undefined);
   client.close();
   await removeLiveHome(liveHome.home).catch(() => undefined);
 }
@@ -1338,4 +1308,4 @@ if (failures.length > 0) {
   console.log("\nFailures:");
   for (const f of failures) console.log(`  - ${f}`);
 }
-process.exit(failed > 0 ? 1 : 0);
+process.exitCode = failed > 0 ? 1 : 0;

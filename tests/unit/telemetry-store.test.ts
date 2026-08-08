@@ -18,58 +18,54 @@ async function telemetryPath(): Promise<string> {
 }
 
 describe("TelemetryStore JSONL persistence", () => {
-  it("keeps durable histories isolated across workspace switches", async () => {
+  it("keeps default-profile and managed-session histories isolated", async () => {
     const dir = await mkdtemp(join(tmpdir(), "knap-workspace-telemetry-"));
     roots.push(dir);
-    const firstHandle = "wsp_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
-    const secondHandle = "wsp_BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB";
     const store = new WorkspaceTelemetryStore(20, dir);
 
-    store.select(firstHandle);
-    store.add({ source: "console", level: "warn", text: "first" });
-    store.select(secondHandle);
+    store.select("default");
+    store.add({ source: "console", level: "warn", text: "default" });
+    store.select("session");
     expect(store.query().records).toEqual([]);
-    store.add({ source: "console", level: "error", text: "second" });
-    store.select(firstHandle);
-    expect(store.query().records.map((record) => record.text)).toEqual(["first"]);
+    store.add({ source: "console", level: "error", text: "session" });
+    store.select("default");
+    expect(store.query().records.map((record) => record.text)).toEqual(["default"]);
     store.closePersistence();
 
     const restarted = new WorkspaceTelemetryStore(20, dir);
-    restarted.select(firstHandle);
-    expect(restarted.query().records.map((record) => record.text)).toEqual(["first"]);
-    restarted.select(secondHandle);
-    expect(restarted.query().records.map((record) => record.text)).toEqual(["second"]);
+    restarted.select("default");
+    expect(restarted.query().records.map((record) => record.text)).toEqual(["default"]);
+    restarted.select("session");
+    expect(restarted.query().records.map((record) => record.text)).toEqual(["session"]);
   });
 
-  it("archives a closed workspace history beside its retained files", async () => {
+  it("archives a closed session history beside its retained files", async () => {
     const dir = await mkdtemp(join(tmpdir(), "knap-workspace-telemetry-"));
     const retainedRoot = await mkdtemp(join(tmpdir(), "knap-retained-workspace-"));
     roots.push(dir, retainedRoot);
-    const handle = "wsp_CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC";
     const store = new WorkspaceTelemetryStore(20, dir);
 
-    store.select(handle);
+    store.select("session");
     store.add({ source: "console", level: "warn", text: "archive me" });
     store.select("default");
-    const archivedPath = await store.archive(handle, retainedRoot);
+    const archivedPath = await store.archive("session", retainedRoot);
 
     expect(archivedPath).toBe(join(retainedRoot, "telemetry", "events.jsonl"));
     expect(await readFile(archivedPath!, "utf8")).toContain("archive me");
-    await expect(readFile(join(dir, `${handle}.jsonl`), "utf8")).rejects.toMatchObject({
+    await expect(readFile(join(dir, "session.jsonl"), "utf8")).rejects.toMatchObject({
       code: "ENOENT",
     });
   });
 
-  it("refuses to archive telemetry for the active workspace", async () => {
+  it("refuses to archive telemetry for the active session", async () => {
     const dir = await mkdtemp(join(tmpdir(), "knap-workspace-telemetry-"));
     const retainedRoot = await mkdtemp(join(tmpdir(), "knap-retained-workspace-"));
     roots.push(dir, retainedRoot);
-    const handle = "wsp_DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD";
     const store = new WorkspaceTelemetryStore(20, dir);
 
-    store.select(handle);
-    await expect(store.archive(handle, retainedRoot)).rejects.toThrow(
-      "Cannot archive telemetry while its workspace is active.",
+    store.select("session");
+    await expect(store.archive("session", retainedRoot)).rejects.toThrow(
+      "Cannot archive telemetry while the managed session is active.",
     );
   });
 

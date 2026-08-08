@@ -1,4 +1,4 @@
-/** Workspace-scoped durable telemetry behind one stable store reference. */
+/** Durable telemetry for the default profile and the single managed session. */
 
 import { access, mkdir, rename } from "node:fs/promises";
 import { join } from "node:path";
@@ -11,11 +11,11 @@ import {
   type TelemetryRecordCounts,
 } from "./store.js";
 
-const WORKSPACE_HANDLE = /^wsp_[A-Za-z0-9_-]{32}$/;
+const SESSION_SCOPE = "session";
 
 /**
  * Tool handlers and capture hooks keep one store reference for the server lifetime.
- * This facade changes only its delegate when a request selects another workspace.
+ * This facade changes only its delegate when a request selects the managed session.
  */
 export class WorkspaceTelemetryStore extends TelemetryStore {
   private readonly stores = new Map<string, TelemetryStore>();
@@ -30,19 +30,19 @@ export class WorkspaceTelemetryStore extends TelemetryStore {
     this.active = this.storeFor("default");
   }
 
-  select(scope: "default" | string): void {
-    if (scope !== "default" && !WORKSPACE_HANDLE.test(scope)) {
-      throw new Error("Invalid telemetry workspace scope.");
+  select(scope: "default" | "session"): void {
+    if (scope !== "default" && scope !== SESSION_SCOPE) {
+      throw new Error("Invalid telemetry session scope.");
     }
     this.active = this.storeFor(scope);
     this.activeScope = scope;
   }
 
-  /** Move a closed workspace's telemetry into its retained or quarantined root. */
-  async archive(scope: string, destinationRoot: string): Promise<string | undefined> {
-    if (!WORKSPACE_HANDLE.test(scope)) throw new Error("Invalid telemetry workspace scope.");
+  /** Move the closed session's telemetry into its retained or quarantined root. */
+  async archive(scope: "session", destinationRoot: string): Promise<string | undefined> {
+    if (scope !== SESSION_SCOPE) throw new Error("Invalid telemetry session scope.");
     if (this.activeScope === scope) {
-      throw new Error("Cannot archive telemetry while its workspace is active.");
+      throw new Error("Cannot archive telemetry while the managed session is active.");
     }
     const source = join(this.telemetryDir, `${scope}.jsonl`);
     const destinationDir = join(destinationRoot, "telemetry");

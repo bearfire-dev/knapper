@@ -32,7 +32,7 @@ src/
   telemetry/             console/error/network ring buffer, plugin attribution
   devcycle/              composites (dev_cycle, exercise, reset_state)
   session/               internal isolated-instance descriptors, launch, and cleanup
-  agent/, workspace/     durable public handles and leases
+  usage/                 cross-process single-user activity guard
 scripts/                 acceptance, e2e, ci-smoke, version sync
 
 skills/                  plugin skills (obsidian-debugging, -instance-setup,
@@ -84,9 +84,9 @@ npm run bg-input   # 6 live checks: background input without desktop focus theft
 npm run workspaces # isolated instances, reconnect, scoped restart, quarantine
 ```
 
-Each live suite provisions its own workspace and tears it down. Run `npm run
-workspaces` for anything that changes `src/session/`, `launch.ts`, workspace
-leases, or process-scoping predicates.
+Each live suite provisions one private session and tears it down. Run `npm run
+workspaces` for changes to `src/session/`, `launch.ts`, the activity guard, or
+process-scoping predicates.
 
 `npm run check && npm run typecheck && npm test && npm run acceptance` is the
 minimum before proposing a change. Run `npm run e2e` for anything touching the
@@ -162,10 +162,10 @@ must stay distinguishable; collapsing them into "cannot connect" is a regression
 `classifyCliOutput` / `classifyEvalOutput` in `connection/cli/exec.ts` own that
 translation. Any new CLI surface goes through them.
 
-**Every tool needs annotations.** `readOnlyHint` gates concurrency: the registry
-takes an exclusive lock for anything not marked read-only, so a mislabeled mutating
-tool will interleave real input against shared UI. Add `destructiveHint` for
-anything that deletes or overwrites. Every schema field needs `.describe()`.
+**Every tool needs annotations.** The registry serializes all calls against one
+active target. `readOnlyHint` still tells MCP clients what a tool changes. Add
+`destructiveHint` for anything that deletes or overwrites. Every schema field needs
+`.describe()`.
 
 **Adding a tool** means: register it in the right `src/tools/*.ts` module with a
 toolset and capability, describe every field, add it to the E2E suite, and check
@@ -197,10 +197,10 @@ second copy. Bump both together.
 - Delegate independent workstreams to parallel subagents with **strict file
   ownership**, since they share one working tree. Overlapping edits corrupt each
   other. Follow implementation with an audit subagent that runs `npm run check`.
-- Open an agent handle, then create an isolated workspace for live work. Pass its
-  `workspaceHandle` to every operational tool.
-- One MCP server owns the default profile at a time. On `DEFAULT_PROFILE_BUSY`,
-  create an isolated workspace and retry with its handle.
+- Open one isolated session with `obsidian_session_open`. Operational tools use the
+  active target and do not accept caller-owned handles.
+- On `KNAPPER_BUSY`, inspect `obsidian_status` and retry after the reported activity
+  window or after the current owner releases the session.
 - `npm run bg-input` stays serialized regardless: it depends on Obsidian not being the
   foreground window, which is one global property of the desktop, and it fails open.
 - Use mermaid flowcharts to explain architecture in plans.
