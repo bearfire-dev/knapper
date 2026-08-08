@@ -1,13 +1,13 @@
 {
   "name": "knapper",
-  "description": "Drive a live Obsidian desktop app over MCP: develop and test Obsidian plugins, automate the vault and UI, and read console output. Use for anything involving Obsidian, its vaults, notes, or plugins.",
+  "description": "MCP server for stateless Obsidian plugin development with one managed session, browser automation, and debugging.",
   "interface": {
     "displayName": "Knapper"
   },
   "plugins": [
     {
       "name": "knapper",
-      "description": "Drive a live Obsidian desktop app over MCP: develop and test Obsidian plugins, automate the vault and UI, and read console output. Use for anything involving Obsidian, its vaults, notes, or plugins.",
+      "description": "MCP server for stateless Obsidian plugin development with one managed session, browser automation, and debugging.",
       "source": {
         "source": "local",
         "path": "./"

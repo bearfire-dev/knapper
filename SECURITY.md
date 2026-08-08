@@ -124,7 +124,7 @@ Moves files to the system trash. `permanent: true` must be set explicitly to byp
 ### `obsidian_remove_vault` — `destructiveHint`
 
 Unregisters an authorized Knapper-created vault. It never deletes the directory. It rejects
-user-adopted vaults. Isolated workspace cleanup uses `obsidian_workspace_destroy`, which first
+user-adopted vaults. Isolated session cleanup uses `obsidian_session_reset`, which first
 stops the private instance, verifies the exact Knapper-owned root, and moves that root to
 recoverable trash under `KNAP_HOME`.
 
@@ -145,7 +145,7 @@ knapper is not a read-only bridge. It writes, outside the vault as well as insid
 | ------------------------------------------ | ---------------------------------------------------------------------- | ---------------------------------------------------------------------- |
 | `<userData>/obsidian.json`                 | `obsidian_setup_cli`, `obsidian_create_vault`, `obsidian_remove_vault` | Flips the global `cli` flag; registers and unregisters vaults          |
 | `<KNAP_HOME>/vault-authorizations.json`    | `obsidian_create_vault`, `knapper authorize`, `knapper revoke`         | External path and filesystem-identity grants, mode `0600`              |
-| `<KNAP_HOME>/trash/`                       | `obsidian_workspace_destroy`                                           | Recoverable quarantine for verified private workspace roots            |
+| `<KNAP_HOME>/trash/`                       | `obsidian_session_reset`                                               | Recoverable quarantine for verified private session roots              |
 | `<vault>/.obsidian/plugins/<id>`           | `obsidian_link_plugin`                                                 | Creates or replaces a **symlink**. Refuses to clobber a real directory |
 | `<vault>/.obsidian/plugins/<id>/data.json` | `obsidian_reset_state`                                                 | Overwrites plugin settings with `{}`; returns the previous contents    |
 | `./.knapper/`                              | screenshot and snapshot tools                                          | Output artifacts, under `KNAP_SCREENSHOT_DIR`                          |

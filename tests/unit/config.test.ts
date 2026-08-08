@@ -17,6 +17,12 @@ describe("parseToolsets", () => {
     expect(parseToolsets("all").enabled.size).toBe(TOOLSETS.length);
   });
 
+  it("reports unknown names when all is present", () => {
+    const result = parseToolsets("all,typo");
+    expect(result.enabled.size).toBe(TOOLSETS.length);
+    expect(result.unknown).toEqual(["typo"]);
+  });
+
   it("parses a comma-separated list, tolerating whitespace and case", () => {
     const { enabled } = parseToolsets(" Core , VAULT ");
     expect([...enabled].sort()).toEqual(["core", "vault"]);
@@ -132,11 +138,10 @@ describe("loadConfig", () => {
     expect(loadConfig({}, {}).targetMatch).toBeUndefined();
   });
 
-  it("clamps concurrency to at least one, so a zero cannot wedge every tool call", () => {
-    expect(loadConfig({}, {}).maxConcurrency).toBe(4);
-    expect(loadConfig({}, { KNAP_MAX_CONCURRENCY: "1" }).maxConcurrency).toBe(1);
-    expect(loadConfig({}, { KNAP_MAX_CONCURRENCY: "0" }).maxConcurrency).toBe(1);
-    expect(loadConfig({}, { KNAP_MAX_CONCURRENCY: "nope" }).maxConcurrency).toBe(4);
+  it("uses a five-minute single-user activity window by default", () => {
+    expect(loadConfig({}, {}).activityIdleMs).toBe(5 * 60_000);
+    expect(loadConfig({}, { KNAP_ACTIVITY_IDLE_MS: "60000" }).activityIdleMs).toBe(60_000);
+    expect(loadConfig({}, { KNAP_ACTIVITY_IDLE_MS: "0" }).activityIdleMs).toBe(30_000);
   });
 
   it("accepts the plan's canonical env names alongside the KNAP_ prefixed ones", () => {

@@ -17,7 +17,7 @@ import { createLogger, type Logger } from "./util/logger.js";
 import { TOOLSET_DESCRIPTIONS } from "./toolsets.js";
 import { registerCoreTools } from "./tools/core.js";
 import { registerProvisioningTools } from "./tools/provisioning.js";
-import { registerWorkspaceTools } from "./tools/workspace.js";
+import { registerSessionTools } from "./tools/session.js";
 import { registerObsidianTools } from "./tools/obsidian.js";
 import { registerEditorTools } from "./tools/editor.js";
 import { registerVaultTools } from "./tools/vault.js";
@@ -33,18 +33,20 @@ import { BrowserProxy } from "./browser/proxy.js";
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import { DefaultProfileLease } from "./session/default-profile-lease.js";
-import { patchDescriptor, readDescriptor, type SessionDescriptor } from "./session/descriptor.js";
+import {
+  listDescriptors,
+  patchDescriptor,
+  readDescriptor,
+  type SessionDescriptor,
+} from "./session/descriptor.js";
 import { readPidStartTime } from "./connection/health.js";
 import { reapStaleSessions } from "./session/reap.js";
-import { sessionOwnerAlive, waitSession } from "./session/registry.js";
-import { requireWorkspace, touchWorkspace } from "./workspace/store.js";
-import { touchAgent } from "./agent/store.js";
+import { sessionState, waitSession } from "./session/registry.js";
 import type { ToolRequestContext } from "./audit/types.js";
 import { UobError } from "./util/errors.js";
-import { WorkspaceLeaseManager } from "./workspace/lease.js";
 import { recoverVaultTransaction } from "./connection/vault-transaction.js";
 import { vaultAuthorizationRegistryPath } from "./connection/vaults.js";
+import { ActivityGuard } from "./usage/activity-guard.js";
 
 export interface ServerContext {
   config: Config;
@@ -54,15 +56,15 @@ export interface ServerContext {
   capture: TelemetryCapture;
   browserProxy: BrowserProxy;
   registry: ToolRegistry;
-  profileLease: DefaultProfileLease;
-  workspaceLeases: WorkspaceLeaseManager;
-  currentWorkspaceHandle?: string;
+  activity: ActivityGuard;
+  currentSessionKey?: string;
+  targetKind?: "isolated" | "default";
   clientInfo(): { name: string; version: string; title?: string } | undefined;
   protocolVersion(): string | undefined;
-  bindSession(descriptor: SessionDescriptor, workspaceHandle: string): Promise<void>;
-  bindDefaultWorkspace(): Promise<void>;
-  selectTelemetry(scope: "default" | string): void;
-  archiveTelemetry(scope: string, destinationRoot: string): Promise<string | undefined>;
+  bindSession(descriptor: SessionDescriptor): Promise<void>;
+  bindDefault(): Promise<void>;
+  selectTelemetry(scope: "default" | "session"): void;
+  archiveTelemetry(scope: "session", destinationRoot: string): Promise<string | undefined>;
   stopJanitor(): void;
 }
 
@@ -143,13 +145,13 @@ USE THIS SERVER WHEN the task involves:
 
 DO NOT USE IT FOR: general web browsing or automating other websites (the browser_* tools here are bound to the Obsidian window), editing this project's own source files, or reading Markdown that merely happens to live outside a vault — ordinary file tools are better for that.
 
-GETTING STARTED: call obsidian_agent_open. Then call obsidian_workspace_create for an isolated scratch workspace, or obsidian_workspace_claim_default only when the user explicitly wants their own Obsidian profile. Pass the returned workspaceHandle to every operational tool. Handles are durable coordination identifiers, not authentication credentials.
+GETTING STARTED: call obsidian_session_open for an isolated scratch session. Use target="default" only when the user explicitly wants their own Obsidian profile. Operational tools use the active session automatically and never require a handle.
 
-CONCURRENCY: each agent can own several isolated workspaces. Calls are routed by workspaceHandle, so do not infer the target from MCP transport state or clientInfo. Only one MCP server can drive the default profile at a time. Use an isolated workspace when the default profile is busy.
+CONCURRENCY: Knapper controls one Obsidian target and runs one operation at a time. obsidian_status reports whether another Knapper process used the target recently.
 
-SAFETY: isolated workspaces always use Knapper-owned scratch vaults. Stop an isolated instance with obsidian_workspace_stop, then use obsidian_workspace_destroy to move its verified root to recoverable Knapper trash. Destroy refuses a live instance and never deletes a user vault. Existing vault access needs an external authorization that the user creates from a terminal. Knapper never treats an Obsidian registry entry or a file inside a vault as deletion authority.
+SAFETY: isolated sessions always use Knapper-owned scratch vaults. obsidian_session_reset stops the managed instance and moves its verified root to recoverable Knapper trash. Cleanup never deletes a user vault. Existing vault access needs an external authorization that the user creates from a terminal. Knapper never treats an Obsidian registry entry or a file inside a vault as deletion authority.
 
-TASK INDEX: create or select a target with obsidian_workspace_create or obsidian_workspace_claim_default; diagnose setup with obsidian_doctor; inspect transports with obsidian_capabilities; inspect the current dynamic surface with obsidian_toolsets; enable optional groups with obsidian_toolsets_update; discover tools with obsidian_tool_catalog; reload a plugin with obsidian_dev_cycle; inspect UI with obsidian_snapshot; read new errors with obsidian_logs.
+TASK INDEX: select a target with obsidian_session_open; diagnose setup with obsidian_doctor; inspect transports with obsidian_capabilities; reload a plugin with obsidian_dev_cycle; inspect UI with obsidian_snapshot; read new errors with obsidian_logs.
 
 CONVENTIONS: use obsidian_* tools for app, vault, and plugin state; browser_* tools for real input. Browser tools are snapshot-first — call browser_snapshot (or the cheaper obsidian_snapshot), then pass a returned ref as "target"; a CSS selector also works. Prefer obsidian_command over clicking through menus. Read console output with obsidian_logs, passing the previous call's cursor as "since" to see only what is new.`;
 
@@ -186,105 +188,98 @@ export async function createServerContext(config: Config): Promise<ServerContext
     config.telemetryNetwork,
   );
   const browserProxy = new BrowserProxy(config, router, logger.child("browser"));
-  const profileLease = new DefaultProfileLease({
-    idleTimeoutMs: config.idleTimeoutMs,
-  });
-  const workspaceLeases = new WorkspaceLeaseManager({
-    idleTimeoutMs: config.idleTimeoutMs,
+  const activity = new ActivityGuard({
+    idleTimeoutMs: config.activityIdleMs,
+    onError: (error) =>
+      logger.warn("activity ownership update failed", {
+        error: error instanceof Error ? error.message : String(error),
+      }),
   });
   let ctx!: ServerContext;
-  const registry = new ToolRegistry(
-    config.enabledToolsets,
-    logger,
-    config.maxConcurrency,
-    telemetry,
-    profileLease,
-    () => config.sessionId !== undefined,
-    {
-      beforeInvoke: async (definition, args, requestContext) => {
-        const handle = args.workspaceHandle;
-        if (
-          typeof handle === "string" &&
-          handle !== "" &&
-          (definition.workspaceIndependent !== true || definition.requiresWorkspaceLease === true)
-        ) {
-          await workspaceLeases.acquire(handle, definition.name);
-        }
-        if (definition.workspaceIndependent === true) return;
-        if (typeof handle !== "string" || handle === "") {
-          throw new UobError("INVALID_ARGUMENT", "A workspaceHandle is required for this tool.", {
-            remediation:
-              "Open an agent handle, then create an isolated workspace or claim the default profile.",
-            fixedBy: "obsidian_workspace_create",
+  const managedSessionOpen = async (): Promise<boolean> => {
+    const descriptors = await listDescriptors();
+    const states = await Promise.all(descriptors.map((descriptor) => sessionState(descriptor)));
+    return states.includes("live");
+  };
+  const statusOnlyTools = new Set([
+    "obsidian_status",
+    "obsidian_doctor",
+    "obsidian_session_status",
+    "obsidian_capabilities",
+    "obsidian_toolsets",
+    "obsidian_tool_catalog",
+  ]);
+  const registry = new ToolRegistry(config.enabledToolsets, logger, telemetry, {
+    beforeInvoke: async (definition) => {
+      if (!statusOnlyTools.has(definition.name)) {
+        await activity.acquire({
+          operation: definition.name,
+          sessionOpen: await managedSessionOpen(),
+        });
+      }
+      if (definition.targetIndependent === true) return;
+      if (ctx.targetKind === undefined) {
+        throw new UobError("SESSION_NOT_FOUND", "No Obsidian session is active.", {
+          remediation: "Open an isolated session before you use operational tools.",
+          fixedBy: "obsidian_session_open",
+        });
+      }
+      if (ctx.targetKind === "isolated") {
+        if (ctx.currentSessionKey === undefined) {
+          throw new UobError("SESSION_NOT_FOUND", "The active session has no descriptor.", {
+            remediation: "Open a new isolated session.",
+            fixedBy: "obsidian_session_open",
           });
         }
-        const workspace = await touchWorkspace(handle);
-        await touchAgent(
-          workspace.agentHandle,
-          observedClient(requestContext) ??
-            (config.transport === "stdio" ? ctx.clientInfo() : undefined),
-        );
-        if (ctx.currentWorkspaceHandle === handle) {
-          telemetry.select(workspace.kind === "default" ? "default" : workspace.handle);
-          return;
+        let descriptor = await readDescriptor(ctx.currentSessionKey);
+        if (descriptor === undefined) {
+          throw new UobError(
+            "SESSION_NOT_FOUND",
+            `Session ${ctx.currentSessionKey} no longer has a descriptor.`,
+            { remediation: "Open a new isolated session.", fixedBy: "obsidian_session_open" },
+          );
         }
-
-        if (workspace.kind === "default") {
-          await ctx.bindDefaultWorkspace();
-        } else {
-          if (workspace.sessionKey === undefined) {
-            throw new UobError("SESSION_NOT_FOUND", `Workspace ${handle} has no private session.`);
-          }
-          let descriptor = await readDescriptor(workspace.sessionKey);
-          if (descriptor === undefined) {
-            throw new UobError(
-              "SESSION_NOT_FOUND",
-              `Workspace ${handle} no longer has a session descriptor.`,
-              { remediation: "Create a new isolated workspace." },
-            );
-          }
-          if (descriptor.readiness.phase === "starting") {
-            descriptor = await waitSession(descriptor.key);
-          }
-          await ctx.bindSession(descriptor, handle);
+        if (descriptor.readiness.phase === "starting") {
+          descriptor = await waitSession(descriptor.key);
         }
-        ctx.currentWorkspaceHandle = handle;
-        telemetry.select(workspace.kind === "default" ? "default" : workspace.handle);
-      },
-      contextProvider: async (args, requestContext) => {
-        const workspaceHandle =
-          typeof args.workspaceHandle === "string" ? args.workspaceHandle : undefined;
-        const workspace =
-          workspaceHandle !== undefined
-            ? await requireWorkspace(workspaceHandle).catch(() => undefined)
-            : undefined;
-        const clientInfo =
-          observedClient(requestContext) ??
-          (config.transport === "stdio" ? ctx.clientInfo() : undefined);
-        const rawProtocolVersion =
-          requestContext?.protocolVersion ?? requestContext?.mcpReq?.envelope?.protocolVersion;
-        const protocolVersion =
-          typeof rawProtocolVersion === "string"
-            ? rawProtocolVersion
-            : config.transport === "stdio"
-              ? ctx.protocolVersion()
-              : undefined;
-        return {
-          ...(clientInfo !== undefined ? { clientInfo } : {}),
-          ...(workspace !== undefined ? { agentHandle: workspace.agentHandle } : {}),
-          ...(workspaceHandle !== undefined ? { workspaceHandle } : {}),
-          transport: config.transport,
-          ...(protocolVersion !== undefined ? { protocolVersion } : {}),
-          ...(requestContext?.requestId !== undefined || requestContext?.mcpReq?.id !== undefined
-            ? {
-                traceId: String(requestContext.requestId ?? requestContext?.mcpReq?.id),
-              }
-            : {}),
-          ...(workspace !== undefined ? { workspaceKind: workspace.kind } : {}),
-        };
-      },
+        if (config.sessionId !== descriptor.key) await ctx.bindSession(descriptor);
+        telemetry.select("session");
+      } else {
+        telemetry.select("default");
+      }
     },
-  );
+    contextProvider: async (_args, requestContext) => {
+      const clientInfo =
+        observedClient(requestContext) ??
+        (config.transport === "stdio" ? ctx.clientInfo() : undefined);
+      const rawProtocolVersion =
+        requestContext?.protocolVersion ?? requestContext?.mcpReq?.envelope?.protocolVersion;
+      const protocolVersion =
+        typeof rawProtocolVersion === "string"
+          ? rawProtocolVersion
+          : config.transport === "stdio"
+            ? ctx.protocolVersion()
+            : undefined;
+      return {
+        ...(clientInfo !== undefined ? { clientInfo } : {}),
+        transport: config.transport,
+        ...(protocolVersion !== undefined ? { protocolVersion } : {}),
+        ...(requestContext?.requestId !== undefined || requestContext?.mcpReq?.id !== undefined
+          ? {
+              traceId: String(requestContext.requestId ?? requestContext?.mcpReq?.id),
+            }
+          : {}),
+        ...(ctx.targetKind !== undefined ? { workspaceKind: ctx.targetKind } : {}),
+      };
+    },
+    afterInvoke: async (definition, _args, _requestContext, outcome) => {
+      if (statusOnlyTools.has(definition.name)) return;
+      const releaseSucceeded =
+        definition.name === "obsidian_session_release" && !(outcome instanceof UobError);
+      await activity.complete(releaseSucceeded ? false : await managedSessionOpen());
+      if (releaseSucceeded) await activity.release();
+    },
+  });
 
   let janitorTimer: NodeJS.Timeout | undefined;
   const runJanitor = (): void => {
@@ -297,7 +292,7 @@ export async function createServerContext(config: Config): Promise<ServerContext
         reapStaleSessions({
           deleteVaults: true,
           idleTimeoutMs: config.idleTimeoutMs,
-          ...(config.sessionId !== undefined ? { keep: config.sessionId } : {}),
+          ...(ctx.currentSessionKey !== undefined ? { keep: ctx.currentSessionKey } : {}),
           logger: logger.child("janitor"),
         }),
       )
@@ -312,38 +307,12 @@ export async function createServerContext(config: Config): Promise<ServerContext
     capture,
     browserProxy,
     registry,
-    profileLease,
-    workspaceLeases,
-    currentWorkspaceHandle: undefined,
+    activity,
+    currentSessionKey: undefined,
+    targetKind: undefined,
     clientInfo: () => undefined,
     protocolVersion: () => undefined,
-    bindSession: async (descriptor, workspaceHandle) => {
-      const lease = await workspaceLeases.status(workspaceHandle);
-      if (lease.state !== "owned") {
-        throw new UobError(
-          "WORKSPACE_BUSY",
-          `Workspace ${workspaceHandle} is not leased by this server.`,
-          {
-            remediation: "Retry the workspace operation through the server that owns its lease.",
-            details: { workspaceHandle, lease },
-          },
-        );
-      }
-      if (
-        descriptor.owner !== undefined &&
-        descriptor.owner.pid !== process.pid &&
-        (await sessionOwnerAlive(descriptor))
-      ) {
-        throw new UobError(
-          "WORKSPACE_BUSY",
-          `Session ${descriptor.key} is owned by another server.`,
-          {
-            remediation:
-              "Use the workspace through its current server, or wait for that server to exit.",
-            details: { session: descriptor.key, ownerPid: descriptor.owner.pid },
-          },
-        );
-      }
+    bindSession: async (descriptor) => {
       await browserProxy.close();
       capture.reset();
       applySessionConfig(config, descriptor);
@@ -359,13 +328,16 @@ export async function createServerContext(config: Config): Promise<ServerContext
           startedAt: ownerStartedAt,
         },
       }));
-      await profileLease.release();
+      ctx.currentSessionKey = descriptor.key;
+      ctx.targetKind = "isolated";
     },
-    bindDefaultWorkspace: async () => {
+    bindDefault: async () => {
       await browserProxy.close();
       capture.reset();
       restoreConfig(config, baseConfig);
       await router.rebind();
+      ctx.currentSessionKey = undefined;
+      ctx.targetKind = "default";
     },
     selectTelemetry: (scope) => telemetry.select(scope),
     archiveTelemetry: (scope, destinationRoot) => telemetry.archive(scope, destinationRoot),
@@ -381,7 +353,7 @@ export async function createServerContext(config: Config): Promise<ServerContext
 
   registerCoreTools(ctx);
   registerProvisioningTools(ctx);
-  registerWorkspaceTools(ctx);
+  registerSessionTools(ctx);
   registerObsidianTools(ctx);
   registerEditorTools(ctx);
   registerVaultTools(ctx);

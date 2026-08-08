@@ -325,14 +325,13 @@ export function registerProvisioningTools(ctx: ServerContext): void {
     name: "obsidian_doctor",
     toolset: "core",
     alwaysEnabled: true,
-    workspaceIndependent: true,
+    targetIndependent: true,
     description:
       "Full diagnostic: the four precondition states (not running, CLI disabled, CDP closed, " +
       "argv corruption), binary path and version, registered vaults, target vault automation state, " +
       "dev-plugin symlinks, and per-toolset tool availability. Prefer this over obsidian_status when " +
       "something is broken — every problem includes remediation and names a fixing tool when one exists.",
     annotations: { readOnlyHint: true },
-    profileIndependent: true,
     inputSchema: {
       vault: z.string().optional().describe("Vault to inspect for restrict-mode and plugin state"),
       detail: z
@@ -346,32 +345,12 @@ export function registerProvisioningTools(ctx: ServerContext): void {
       const targetVault = vaultArg ?? config.vault;
 
       let health = await router.health({
-        skipCliProbe: config.sessionId === undefined,
+        skipCliProbe: ctx.targetKind !== "isolated",
       });
       const availability = await router.refreshAvailability(true);
 
-      let version: string;
-      if (config.sessionId === undefined && health.running) {
-        try {
-          const result = await ctx.profileLease.run("obsidian_doctor", async () => {
-            const leasedHealth = await router.health();
-            return {
-              health: leasedHealth,
-              version: await runningObsidianVersion(router, leasedHealth),
-            };
-          });
-          health = result.health;
-          version = result.version;
-        } catch (error) {
-          version =
-            error instanceof UobError && error.code === "DEFAULT_PROFILE_BUSY"
-              ? "(unavailable — default profile busy)"
-              : "(unavailable)";
-        }
-      } else {
-        version = await runningObsidianVersion(router, health);
-      }
-      const defaultProfileLease = await ctx.profileLease.status();
+      const version = await runningObsidianVersion(router, health);
+      const activity = await ctx.activity.status();
 
       const toolsets: Record<string, { enabled: boolean; toolCount: number }> = {};
       const byToolset = registry.groupAllByToolset();
@@ -398,20 +377,20 @@ export function registerProvisioningTools(ctx: ServerContext): void {
         installedPackageSource: installedPackage?.source,
       });
       const descriptor =
-        config.sessionId !== undefined ? await readDescriptor(config.sessionId) : undefined;
+        ctx.currentSessionKey !== undefined
+          ? await readDescriptor(ctx.currentSessionKey)
+          : undefined;
       const profile =
-        config.sessionId === undefined
+        ctx.targetKind !== "isolated"
           ? {
-              kind: "default" as const,
-              workspaceHandle: ctx.currentWorkspaceHandle ?? null,
+              kind: (ctx.targetKind ?? "none") as "default" | "none",
               sessionId: null,
               userDataDir: null,
               visualIdentity: null,
             }
           : {
               kind: "private" as const,
-              workspaceHandle: ctx.currentWorkspaceHandle ?? null,
-              sessionId: config.sessionId,
+              sessionId: ctx.currentSessionKey ?? null,
               userDataDir: config.userDataDir,
               visualIdentity: descriptor?.visualIdentity ?? {
                 state: "degraded" as const,
@@ -435,9 +414,9 @@ export function registerProvisioningTools(ctx: ServerContext): void {
       // Which instance this server drives, and how well CLI commands are pinned to
       // it. `shared` means a CLI call may land in whichever Obsidian booted last,
       // which is worth saying out loud because nothing else reports it.
-      if (config.sessionId !== undefined) {
+      if (ctx.targetKind === "isolated") {
         lines.push(
-          `Workspace: ${ctx.currentWorkspaceHandle ?? "isolated"}`,
+          "Active target: isolated",
           ...(full ? [`Profile: ${config.userDataDir}`] : []),
           `Visual identity: ${profile.visualIdentity?.state ?? "degraded"}`,
           `CLI isolation: ${config.cliIsolation}` +
@@ -446,10 +425,7 @@ export function registerProvisioningTools(ctx: ServerContext): void {
               : " — CLI commands are not pinned to this instance; the renderer route is"),
         );
       } else {
-        lines.push(
-          `Workspace: ${ctx.currentWorkspaceHandle ?? "none"} (default Obsidian profile)`,
-          `Default profile: ${defaultProfileLease.state}`,
-        );
+        lines.push(`Active target: ${ctx.targetKind ?? "none"}`, `Agent use: ${activity.state}`);
       }
 
       if (health.argvCorruption) {
@@ -478,7 +454,7 @@ export function registerProvisioningTools(ctx: ServerContext): void {
         lines.push(
           "  No vault is authorized. Every vault-scoped tool will refuse until the user runs",
           "  `npx knapper authorize <vault path>` themselves, or obsidian_create_vault makes a",
-          "  registered one. Prefer obsidian_workspace_create for throwaway work. Do not suggest",
+          "  registered one. Prefer obsidian_session_open for throwaway work. Do not suggest",
           "  authorization unless the user asked to work",
           "  in a specific existing vault.",
         );
@@ -544,7 +520,7 @@ export function registerProvisioningTools(ctx: ServerContext): void {
           vaultState: vaultState ?? null,
           toolsets,
           transports: availability,
-          defaultProfileLease,
+          activity,
           profile,
         },
       };
@@ -806,17 +782,17 @@ export function registerProvisioningTools(ctx: ServerContext): void {
         .optional()
         .describe("Cold-restart Obsidian afterwards so the vault is immediately usable"),
     },
+    annotations: { readOnlyHint: false, destructiveHint: true },
     handler: async (args) => {
       const path = args.path as string;
 
-      if (config.sessionId !== undefined) {
+      if (ctx.targetKind === "isolated") {
         throw new UobError(
           "INVALID_ARGUMENT",
-          "A workspace-bound server cannot add another vault to its private profile.",
+          "An isolated session cannot add another vault to its private profile.",
           {
-            remediation:
-              "Create a separate workspace for the new vault. This keeps each private profile tied to one vault.",
-            fixedBy: "obsidian_workspace_create",
+            remediation: "Reset the managed session when you need a different scratch vault.",
+            fixedBy: "obsidian_session_reset",
           },
         );
       }
@@ -916,14 +892,14 @@ export function registerProvisioningTools(ctx: ServerContext): void {
     toolset: "vault",
     description:
       "Unregister an authorized vault from Obsidian. This tool never deletes files. Scratch " +
-      "workspace cleanup is available only through obsidian_workspace_destroy and moves content " +
+      "session cleanup is available only through obsidian_session_reset and moves content " +
       "to recoverable Knapper trash.",
     inputSchema: {
       vault: z
         .string()
         .describe("Registered vault name, or an absolute path to the vault directory"),
     },
-    annotations: { destructiveHint: true },
+    annotations: { readOnlyHint: false, destructiveHint: true },
     handler: async (args) => {
       const wanted = args.vault as string;
 
@@ -973,7 +949,7 @@ export function registerProvisioningTools(ctx: ServerContext): void {
     },
     // Replaces an existing symlink at the target path, and unlink=true removes one.
     // It refuses to clobber a real directory, but the link itself is still lost.
-    annotations: { destructiveHint: true },
+    annotations: { readOnlyHint: false, destructiveHint: true },
     handler: async (args) => {
       const vault = args.vault as string;
       const sourceDir = args.sourceDir as string;

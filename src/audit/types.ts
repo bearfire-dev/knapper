@@ -5,11 +5,9 @@ export interface AuditClientInfo {
   version?: string;
 }
 
-/** Optional request data supplied by the server and workspace layers. */
+/** Optional request data supplied by the server and active-target layer. */
 export interface AuditCallContext {
   clientInfo?: AuditClientInfo;
-  agentHandle?: string;
-  workspaceHandle?: string;
   transport?: string;
   protocolVersion?: string;
   traceId?: string;
@@ -57,8 +55,6 @@ export interface ToolAuditEvent {
   arguments: AuditArgumentMetadata;
   error?: AuditErrorEnvelope;
   client?: AuditClientInfo;
-  agent_handle?: string;
-  workspace_handle?: string;
   transport?: string;
   protocol_version?: string;
   workspace_kind?: string;
@@ -79,4 +75,10 @@ export interface ToolRegistryHooks {
     args: Record<string, unknown>,
     requestContext?: ToolRequestContext,
   ) => AuditCallContext | undefined | Promise<AuditCallContext | undefined>;
+  afterInvoke?: (
+    definition: ToolDefinition,
+    args: Record<string, unknown>,
+    requestContext: ToolRequestContext | undefined,
+    outcome: unknown,
+  ) => void | Promise<void>;
 }

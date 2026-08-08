@@ -54,7 +54,7 @@ the installed `knapper` binary:
       "command": ["knapper"],
       "enabled": true,
       "environment": {
-        "KNAP_TOOLSETS": "core,workspace,telemetry,plugin-dev",
+        "KNAP_TOOLSETS": "all",
         "KNAP_SCREENSHOT_DIR": "/absolute/path/to/knapper-output"
       }
     }
@@ -62,8 +62,8 @@ the installed `knapper` binary:
 }
 ```
 
-Both environment variables are optional. `KNAP_TOOLSETS` selects the startup
-surface. `KNAP_SCREENSHOT_DIR` must name the screenshot output root.
+Both environment variables are optional. The MCP surface is fixed at initialization.
+`KNAP_SCREENSHOT_DIR` must name the screenshot output root.
 
 Use this command array to track the default branch:
 

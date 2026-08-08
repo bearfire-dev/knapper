@@ -1,0 +1,9 @@
+{
+  "id": "knapper-settings-fixture",
+  "name": "Knapper settings fixture",
+  "version": "1.0.0",
+  "minAppVersion": "1.8.0",
+  "description": "Live settings UI fixture for Knapper.",
+  "author": "bearfire-dev",
+  "isDesktopOnly": true
+}

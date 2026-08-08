@@ -19,15 +19,6 @@ import { stat } from "node:fs/promises";
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 let VAULT;
 const PLUGIN = process.env.PLUGIN_ID;
-const CONTROL_TOOLS = new Set([
-  "obsidian_agent_open",
-  "obsidian_agent_close",
-  "obsidian_workspace_claim_default",
-  "obsidian_workspace_stop",
-  "obsidian_workspace_release",
-]);
-let agentHandle;
-let workspaceHandle;
 
 class McpClient {
   #child;
@@ -94,11 +85,7 @@ class McpClient {
   }
 
   async call(name, args = {}) {
-    const input =
-      workspaceHandle !== undefined && !CONTROL_TOOLS.has(name)
-        ? { ...args, workspaceHandle }
-        : args;
-    const res = await this.send("tools/call", { name, arguments: input });
+    const res = await this.send("tools/call", { name, arguments: args });
     if (res.error) throw new Error(`${name}: ${res.error.message}`);
     const content = res.result?.content ?? [];
     const text = content
@@ -149,11 +136,8 @@ try {
   console.log(`server: ${init.result.serverInfo.name} v${init.result.serverInfo.version}\n`);
   const isolated = await createDisposableWorkspace(client, root, {
     home: liveHome.home,
-    agentLabel: "acceptance",
     label: "acceptance-scratch",
   });
-  agentHandle = isolated.agentHandle;
-  workspaceHandle = isolated.workspaceHandle;
   VAULT = isolated.session.vault?.name;
   assert(typeof VAULT === "string", "isolated workspace has no vault identity");
   for (const [path, content] of [
@@ -347,15 +331,7 @@ try {
     },
   );
 } finally {
-  if (workspaceHandle !== undefined) {
-    await client.call("obsidian_workspace_stop", { workspaceHandle }).catch(() => undefined);
-    await client.call("obsidian_workspace_release", { workspaceHandle }).catch(() => undefined);
-    workspaceHandle = undefined;
-  }
-  if (agentHandle !== undefined) {
-    await client.call("obsidian_agent_close", { agentHandle }).catch(() => undefined);
-    agentHandle = undefined;
-  }
+  await client.call("obsidian_session_release").catch(() => undefined);
   client.close();
   await removeLiveHome(liveHome.home).catch(() => undefined);
 }

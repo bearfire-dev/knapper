@@ -1,72 +1,59 @@
 # Configuration
 
 Knapper reads CLI flags first, then environment variables, then defaults. Tool
-calls select an Obsidian target with a required `workspaceHandle`. Transport state
-does not select a workspace.
+calls use one active Obsidian session. The session state does not depend on agent
+handles or transport reconnect state.
 
 ## Connection and process settings
 
-| Environment variable     | CLI flag         | Default                 | Purpose                                      |
-| ------------------------ | ---------------- | ----------------------- | -------------------------------------------- |
-| `OBSIDIAN_CDP_URL`       | `--cdp-url`      | `http://127.0.0.1:9222` | Default-profile CDP endpoint                 |
-| `OBSIDIAN_BIN`           | `--obsidian-bin` | OS default              | Obsidian executable                          |
-| `OBSIDIAN_VAULT`         | `--vault`, `-v`  | unset                   | Default authorized vault name                |
-| `OBSIDIAN_TARGET_MATCH`  | `--target-match` | unset                   | Additional default-window match              |
-| `KNAP_HOME`              | none             | `~/.knapper_mcp`        | Durable handles, telemetry, audit, and trash |
-| `KNAP_IDLE_TIMEOUT_MS`   | none             | `86400000`              | Workspace lease and cleanup timeout          |
-| `KNAP_COMMAND_TRANSPORT` | none             | `auto`                  | `auto`, `cli`, or `playwright`               |
-| `KNAP_CLI_TIMEOUT_MS`    | none             | `15000`                 | Obsidian CLI timeout in milliseconds         |
+| Environment variable     | CLI flag         | Default                 | Purpose                                    |
+| ------------------------ | ---------------- | ----------------------- | ------------------------------------------ |
+| `OBSIDIAN_CDP_URL`       | `--cdp-url`      | `http://127.0.0.1:9222` | Default-profile CDP endpoint               |
+| `OBSIDIAN_BIN`           | `--obsidian-bin` | OS default              | Obsidian executable                        |
+| `OBSIDIAN_VAULT`         | `--vault`, `-v`  | unset                   | Default authorized vault name              |
+| `OBSIDIAN_TARGET_MATCH`  | `--target-match` | unset                   | Additional default-window match            |
+| `KNAP_HOME`              | none             | `~/.knapper_mcp`        | Session state, telemetry, audit, and trash |
+| `KNAP_IDLE_TIMEOUT_MS`   | none             | `86400000`              | Inactive session cleanup time              |
+| `KNAP_ACTIVITY_IDLE_MS`  | none             | `300000`                | Single-agent activity ownership time       |
+| `KNAP_COMMAND_TRANSPORT` | none             | `auto`                  | `auto`, `cli`, or `playwright`             |
+| `KNAP_CLI_TIMEOUT_MS`    | none             | `15000`                 | Obsidian CLI timeout in milliseconds       |
 
-Do not set an internal profile, runtime directory, or instance descriptor. Use
-`obsidian_workspace_create` and pass its workspace handle on each tool call.
+Knapper creates a private profile and runtime directory for a managed session.
+One live process owns the activity record. Another process receives
+`KNAPPER_BUSY`. The record includes the process ID, session state, current
+operation, last activity, and retry time. Knapper reclaims stale state only after
+it verifies process death or an expired activity record.
 
-Agent and workspace handles use 192 bits of random data. Both records have a
-24-hour idle lease. Each successful operational call renews both leases. Handles
-provide attribution and routing. They do not provide authentication.
-
-One live Knapper process holds an exclusive lease for each workspace. Another
-process receives `WORKSPACE_BUSY` when it uses that workspace. The lease expires
-after `KNAP_IDLE_TIMEOUT_MS` when the process has no active calls. Knapper reclaims
-the lease immediately after it proves process death or PID reuse.
-
-An isolated workspace always creates an exact scratch layout under `KNAP_HOME`.
+An isolated session always creates an exact scratch layout under `KNAP_HOME`.
 It cannot adopt a caller path. Knapper verifies the private-session identity before
 it routes tools. The result returns `visualIdentity.state` and
-`visualIdentity.warnings`. A workspace does not become ready when the required
+`visualIdentity.warnings`. A session does not become ready when the required
 banner, title, icon, or desktop class is missing.
 
-Call `obsidian_workspace_stop` before `obsidian_workspace_destroy`. The destroy tool
-refuses an active workspace. It checks path, symlink, device, and inode ownership.
-It then moves the root into `KNAP_HOME/trash`. It does not hard-delete the root.
-
-`obsidian_workspace_release` removes the stopped handle and retains the scratch
-vault. A default-profile workspace can only be released.
+Call `obsidian_session_release` to release the active claim. The private app and
+scratch vault stay ready for the next agent.
+Call `obsidian_session_reset` to replace it. Cleanup checks path, symlink, device,
+and inode ownership. It moves the root into `KNAP_HOME/trash`. It never
+hard-deletes the root.
 
 ## Tool surface
 
-| Environment variable   | CLI flag       | Default      | Purpose                            |
-| ---------------------- | -------------- | ------------ | ---------------------------------- |
-| `KNAP_TOOLSETS`        | `--toolsets`   | empty        | Comma-separated toolsets or `all`  |
-| `KNAP_MAX_CONCURRENCY` | none           | `4`          | Maximum concurrent read-only calls |
-| `KNAP_SCREENSHOT_DIR`  | `--output-dir` | `./.knapper` | Default-profile artifact root      |
+| Environment variable  | CLI flag       | Default                                 | Purpose                       |
+| --------------------- | -------------- | --------------------------------------- | ----------------------------- |
+| `KNAP_TOOLSETS`       | `--toolsets`   | core, ui, telemetry, plugin-dev, editor | Startup toolset selection     |
+| `KNAP_SCREENSHOT_DIR` | `--output-dir` | `./.knapper`                            | Default-profile artifact root |
 
-An empty toolset value starts only the 17 control tools. These tools remain visible
-when you disable their toolsets:
+Knapper publishes the complete tool surface during MCP initialization. The list
+does not change during a connection. Do not change the tool list after startup.
+Knapper runs one operation at a time.
 
-- `obsidian_agent_open`, `obsidian_agent_status`, and `obsidian_agent_close`
-- `obsidian_workspace_create`, `obsidian_workspace_claim_default`, and `obsidian_workspace_list`
-- `obsidian_workspace_status`, `obsidian_workspace_stop`, and `obsidian_workspace_restart`
-- `obsidian_workspace_release` and `obsidian_workspace_destroy`
-- `obsidian_status`, `obsidian_doctor`, and `obsidian_capabilities`
-- `obsidian_toolsets`, `obsidian_tool_catalog`, and `obsidian_toolsets_update`
+The session lifecycle tools are always available. They stay available when
+`KNAP_TOOLSETS` excludes `core`, so an agent can open, inspect, release, or reset
+the active session. `KNAP_TOOLSETS` controls the other toolsets at startup.
 
-`obsidian_toolsets` reports the enabled set. `obsidian_tool_catalog` searches all
-tool definitions with cursor pagination. `obsidian_toolsets_update` accepts
-`enable`, `disable`, and `dryRun`.
-An effective update sends `notifications/tools/list_changed` to the MCP client.
-
-Enable `core`, `workspace`, `telemetry`, and `plugin-dev` for the full plugin loop.
-Add `ui` for browser automation. Add other toolsets only when the task needs them.
+The default `core` toolset includes `obsidian_eval` and `obsidian_cli`. These tools
+can run renderer JavaScript and raw Obsidian CLI commands. Remove `core` from an
+explicit `KNAP_TOOLSETS` value when a client must not have those capabilities.
 
 ## Structured output
 
@@ -85,7 +72,7 @@ Screenshot tools return this object:
 ```
 
 The requested `path` must be relative to the configured output root. Screenshot
-tools do not return inline base64 data. Isolated workspaces use their private
+tools do not return inline base64 data. Private sessions use their private
 `output/` root.
 
 Doctor returns explicit version information in this shape:
@@ -122,13 +109,12 @@ the package manager that supplied `installedPackage`.
 | `KNAP_RECONNECT_MS`      | `2000`  | Telemetry reconnect delay        |
 
 Knapper writes default-profile telemetry to `KNAP_HOME/telemetry/events.jsonl`.
-Each isolated workspace has a separate `<workspaceHandle>.jsonl` file in that
-directory. Switching workspaces does not erase records or mix histories. Knapper
+The managed session uses `KNAP_HOME/telemetry/session.jsonl`. Knapper
 writes redacted tool audit events under `KNAP_HOME/audit`. Audit files use mode
 `0600` and have 14-day retention.
 
-Release and destroy operations archive an isolated workspace's telemetry file.
-They store it in the retained or quarantined root.
+Session reset archives its telemetry in the quarantined root. Session release does
+not archive telemetry because it keeps the private session ready for reuse.
 
 `LOG_LEVEL`, `RECONNECT_MS`, and `SCREENSHOT_DIR` are supported aliases. The
 `KNAP_` name takes precedence.
@@ -141,8 +127,8 @@ They store it in the retained or quarantined root.
 | `MCP_PORT`           | `--port`      | `9223`      | HTTP listen port         |
 | `MCP_HOST`           | `--host`      | `127.0.0.1` | Exact loopback bind host |
 
-HTTP serves `/mcp` with the MCP 2026 stateless request model. It does not issue an
-`Mcp-Session-Id`. Each request can select a durable workspace handle.
+HTTP is experimental. It serves `/mcp` with one global lane and one active session.
+It does not issue an `Mcp-Session-Id`. Each request uses the active session.
 
 The HTTP server has no authentication. The listener accepts only `127.0.0.1` or
 `::1` as the bind host. It rejects `localhost`, wildcard addresses, and LAN
@@ -165,5 +151,5 @@ binds the canonical path to its device and inode. Legacy `.knapper-managed` file
 have no effect. Authorization permits vault operations. It never permits directory
 deletion.
 
-`obsidian_create_vault` refuses when an isolated workspace is selected. Use the
-scratch vault that `obsidian_workspace_create` created for that workspace.
+`obsidian_create_vault` refuses when a private session is selected. Use the
+scratch vault that `obsidian_session_open` created for that session.

@@ -30,13 +30,12 @@ export function registerCoreTools(ctx: ServerContext): void {
     name: "obsidian_status",
     toolset: "core",
     alwaysEnabled: true,
-    workspaceIndependent: true,
+    targetIndependent: true,
     description:
       "Report which transports are reachable, which Obsidian windows are attached, and which " +
       "toolsets are enabled. Cheap and safe to call first in a session. For a full diagnosis with " +
       "remediation steps, use obsidian_doctor instead.",
     annotations: { readOnlyHint: true },
-    profileIndependent: true,
     inputSchema: {},
     handler: async () => {
       const availability = await router.refreshAvailability(true);
@@ -46,22 +45,22 @@ export function registerCoreTools(ctx: ServerContext): void {
       const windows = availability.playwright
         ? await router.playwright.windowSummaries().catch(() => [])
         : [];
-      const defaultProfileLease = await ctx.profileLease.status();
+      const activity = await ctx.activity.status();
       const descriptor =
-        config.sessionId !== undefined ? await readDescriptor(config.sessionId) : undefined;
+        ctx.currentSessionKey !== undefined
+          ? await readDescriptor(ctx.currentSessionKey)
+          : undefined;
       const profile =
-        config.sessionId === undefined
+        ctx.targetKind !== "isolated"
           ? {
-              kind: "default" as const,
-              workspaceHandle: ctx.currentWorkspaceHandle ?? null,
+              kind: (ctx.targetKind ?? "none") as "default" | "none",
               sessionId: null,
               userDataDir: null,
               visualIdentity: null,
             }
           : {
               kind: "private" as const,
-              workspaceHandle: ctx.currentWorkspaceHandle ?? null,
-              sessionId: config.sessionId,
+              sessionId: ctx.currentSessionKey ?? null,
               userDataDir: config.userDataDir,
               visualIdentity: descriptor?.visualIdentity ?? {
                 state: "degraded" as const,
@@ -81,9 +80,9 @@ export function registerCoreTools(ctx: ServerContext): void {
         }`,
         `Toolsets enabled: ${registry.toolsetState().enabled.join(", ")}`,
         `Toolsets disabled: ${registry.toolsetState().disabled.join(", ") || "none"}`,
-        `Default profile: ${defaultProfileLease.state}`,
+        `Agent use: ${activity.state}`,
         `Profile identity: ${profile.kind}${profile.sessionId === null ? "" : ` (${profile.sessionId})`}`,
-        `Workspace: ${profile.workspaceHandle ?? "none"}`,
+        `Active target: ${ctx.targetKind ?? "none"}`,
         ...(profile.visualIdentity === null
           ? []
           : [`Visual identity: ${profile.visualIdentity.state}`]),
@@ -130,7 +129,7 @@ export function registerCoreTools(ctx: ServerContext): void {
             Object.entries(registry.byToolset()).map(([name, tools]) => [name, tools.length]),
           ),
           problemCount: health.problems.length,
-          defaultProfileLease,
+          activity,
           profile,
         },
       };
@@ -141,8 +140,7 @@ export function registerCoreTools(ctx: ServerContext): void {
     name: "obsidian_capabilities",
     toolset: "core",
     alwaysEnabled: true,
-    profileIndependent: true,
-    workspaceIndependent: true,
+    targetIndependent: true,
     description:
       "Report every Knapper capability, the live transport that can serve it, and the fixing tool " +
       "when it is unavailable. Use this before choosing between obsidian_* and browser_* tools.",
@@ -177,10 +175,8 @@ export function registerCoreTools(ctx: ServerContext): void {
     name: "obsidian_toolsets",
     toolset: "core",
     alwaysEnabled: true,
-    profileIndependent: true,
-    workspaceIndependent: true,
-    description:
-      "Report the current operational toolsets. Use obsidian_toolsets_update to change them.",
+    targetIndependent: true,
+    description: "Report the fixed toolsets selected when this server started.",
     annotations: { readOnlyHint: true },
     inputSchema: {},
     outputSchema: toolsetStateOutputSchema,
@@ -197,106 +193,10 @@ export function registerCoreTools(ctx: ServerContext): void {
   });
 
   registry.add({
-    name: "obsidian_toolsets_update",
-    toolset: "core",
-    alwaysEnabled: true,
-    profileIndependent: true,
-    workspaceIndependent: true,
-    description:
-      "Enable or disable operational toolsets for this server process. Use dryRun to preview the change.",
-    annotations: { readOnlyHint: false, idempotentHint: true },
-    inputSchema: {
-      enable: z
-        .array(toolsetNameSchema)
-        .optional()
-        .describe("Toolsets to enable immediately through the MCP tool registration handles"),
-      disable: z
-        .array(toolsetNameSchema)
-        .optional()
-        .describe("Toolsets to disable immediately through the MCP tool registration handles"),
-      dryRun: z.boolean().optional().describe("Preview the resulting surface without changing it"),
-    },
-    outputSchema: {
-      dryRun: z.boolean(),
-      enabled: z.array(toolsetNameSchema),
-      disabled: z.array(toolsetNameSchema),
-      changed: z.object({
-        enabled: z.array(toolsetNameSchema),
-        disabled: z.array(toolsetNameSchema),
-        toolCount: z.number().int().nonnegative(),
-      }),
-    },
-    handler: async (args) => {
-      const enable = [...new Set((args.enable as (typeof TOOLSETS)[number][] | undefined) ?? [])];
-      const disable = [...new Set((args.disable as (typeof TOOLSETS)[number][] | undefined) ?? [])];
-      const overlap = enable.filter((toolset) => disable.includes(toolset));
-      if (overlap.length > 0) {
-        throw new UobError(
-          "INVALID_ARGUMENT",
-          `A toolset cannot be enabled and disabled in the same call: ${overlap.join(", ")}.`,
-          {
-            remediation: "Remove each duplicate toolset from either enable or disable.",
-          },
-        );
-      }
-
-      const before = registry.toolsetState();
-      const enabledBefore = new Set(before.enabled);
-      const changedEnabled = enable.filter((toolset) => !enabledBefore.has(toolset)).sort();
-      const changedDisabled = disable.filter((toolset) => enabledBefore.has(toolset)).sort();
-      const dryRun = args.dryRun === true;
-      let changedToolCount = 0;
-
-      if (dryRun) {
-        for (const toolset of [...changedEnabled, ...changedDisabled]) {
-          changedToolCount += (registry.groupAllByToolset()[toolset] ?? []).filter(
-            (name) => registry.get(name)?.alwaysEnabled !== true,
-          ).length;
-        }
-      } else {
-        for (const toolset of changedEnabled) {
-          changedToolCount += registry.setToolsetEnabled(toolset, true).length;
-        }
-        for (const toolset of changedDisabled) {
-          changedToolCount += registry.setToolsetEnabled(toolset, false).length;
-        }
-      }
-
-      const enabled = new Set(before.enabled);
-      for (const toolset of changedEnabled) enabled.add(toolset);
-      for (const toolset of changedDisabled) enabled.delete(toolset);
-      const state = dryRun
-        ? {
-            enabled: TOOLSETS.filter((toolset) => enabled.has(toolset)).sort(),
-            disabled: TOOLSETS.filter((toolset) => !enabled.has(toolset)).sort(),
-          }
-        : registry.toolsetState();
-      const prefix = dryRun ? "Dry run" : "Updated";
-      return {
-        text: [
-          `${prefix}: ${changedToolCount} tool registration(s) ${dryRun ? "would change" : "changed"}.`,
-          `Enabled toolsets: ${state.enabled.join(", ") || "none"}`,
-          `Disabled toolsets: ${state.disabled.join(", ") || "none"}`,
-        ].join("\n"),
-        json: {
-          dryRun,
-          ...state,
-          changed: {
-            enabled: changedEnabled,
-            disabled: changedDisabled,
-            toolCount: changedToolCount,
-          },
-        },
-      };
-    },
-  });
-
-  registry.add({
     name: "obsidian_tool_catalog",
     toolset: "core",
     alwaysEnabled: true,
-    profileIndependent: true,
-    workspaceIndependent: true,
+    targetIndependent: true,
     description:
       "Search the Knapper tool catalog without enabling disabled tools. Results use cursor pagination.",
     annotations: { readOnlyHint: true },
