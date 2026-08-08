@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { loadConfig } from "../../src/config.js";
 import { applySessionConfig } from "../../src/server.js";
 import type { SessionDescriptor } from "../../src/session/descriptor.js";
+import { selectSingletonDescriptor } from "../../src/tools/session.js";
 
 function descriptor(): SessionDescriptor {
   return {
@@ -56,5 +57,21 @@ describe("applySessionConfig", () => {
       requestedPort: 0,
     };
     expect(() => applySessionConfig(loadConfig({}, {}), pending)).toThrow(/not ready/);
+  });
+});
+
+describe("selectSingletonDescriptor", () => {
+  it("retains a failed descriptor so recovery cannot create a second target", () => {
+    const failed = descriptor();
+    failed.readiness = {
+      phase: "failed",
+      failedAt: "2026-08-04T12:00:02.000Z",
+      code: "TIMEOUT",
+      message: "startup verification timed out",
+      remediation: "Retry the managed session.",
+      fixedBy: "obsidian_session_reset",
+    };
+
+    expect(selectSingletonDescriptor([failed])).toBe(failed);
   });
 });

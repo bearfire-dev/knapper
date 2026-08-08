@@ -64,10 +64,14 @@ export class ActivityGuard {
     this.now = opts.now ?? (() => new Date());
     this.pid = opts.pid ?? process.pid;
     this.host = opts.hostname ?? hostname();
-    if (!Number.isFinite(opts.idleTimeoutMs) || opts.idleTimeoutMs <= 0) {
-      throw new UobError("INVALID_ARGUMENT", "The activity idle timeout must be positive.", {
-        remediation: "Set KNAP_ACTIVITY_IDLE_MS to a positive number of milliseconds.",
-      });
+    if (!Number.isFinite(opts.idleTimeoutMs) || opts.idleTimeoutMs < 1_000) {
+      throw new UobError(
+        "INVALID_ARGUMENT",
+        "The activity idle timeout must be at least 1000 ms.",
+        {
+          remediation: "Set KNAP_ACTIVITY_IDLE_MS to at least 1000 milliseconds.",
+        },
+      );
     }
   }
 
@@ -118,7 +122,7 @@ export class ActivityGuard {
 
   private startHeartbeat(): void {
     if (this.heartbeatTimer !== undefined) clearInterval(this.heartbeatTimer);
-    const intervalMs = Math.max(1_000, Math.floor(this.opts.idleTimeoutMs / 3));
+    const intervalMs = Math.max(250, Math.floor(this.opts.idleTimeoutMs / 3));
     this.heartbeatTimer = setInterval(
       () => void this.heartbeat().catch(() => undefined),
       intervalMs,
