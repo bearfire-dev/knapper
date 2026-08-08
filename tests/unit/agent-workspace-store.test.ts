@@ -12,18 +12,14 @@ describe("singleton session contract", () => {
     expect(source).toContain("never require a handle");
 
     const sessionToolPath = join(root, "src", "tools", "session.ts");
-    try {
-      const sessionTools = await readFile(sessionToolPath, "utf8");
-      for (const name of [
-        "obsidian_session_open",
-        "obsidian_session_status",
-        "obsidian_session_release",
-        "obsidian_session_reset",
-      ]) {
-        expect(sessionTools).toContain(name);
-      }
-    } catch {
-      // The lifecycle module can land after the server instruction contract.
+    const sessionTools = await readFile(sessionToolPath, "utf8");
+    for (const name of [
+      "obsidian_session_open",
+      "obsidian_session_status",
+      "obsidian_session_release",
+      "obsidian_session_reset",
+    ]) {
+      expect(sessionTools).toContain(name);
     }
   });
 });

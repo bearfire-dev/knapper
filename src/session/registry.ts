@@ -483,7 +483,7 @@ export async function waitSession(
 
   throw new UobError("TIMEOUT", `Session ${key} is still starting.`, {
     remediation:
-      "Retry obsidian_session_open after checking the launch diagnostics. Knapper cleans up the failed session before it returns the error.",
+      "Check the launch diagnostics. The session stays in the starting phase, so retry obsidian_session_open to keep waiting, or obsidian_session_reset to discard it.",
     fixedBy: "obsidian_session_open",
     details: await sessionDiagnostics(descriptor),
   });

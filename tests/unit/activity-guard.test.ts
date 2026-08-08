@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { chmod, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { ActivityGuard } from "../../src/usage/activity-guard.js";
+import { ACTIVITY_RECORD_NAME, ActivityGuard } from "../../src/usage/activity-guard.js";
 
 let root: string;
 let env: NodeJS.ProcessEnv;
@@ -34,6 +34,7 @@ describe("ActivityGuard", () => {
     expect((await first.status()).state).toBe("free");
     await first.acquire({ operation: "browser_click", sessionOpen: true });
     expect((await first.status()).state).toBe("self");
+    await first.complete(true);
     now = new Date("2026-08-08T12:00:10Z");
     await first.status();
     now = new Date("2026-08-08T12:00:31Z");
@@ -75,7 +76,7 @@ describe("ActivityGuard", () => {
     expect((await guard.status()).owner).not.toHaveProperty("currentOperation");
     await guard.release();
     expect((await guard.status()).state).toBe("free");
-    expect(await readFile(join(root, "usage.json")).catch(() => undefined)).toBeUndefined();
+    expect(await readFile(join(root, ACTIVITY_RECORD_NAME)).catch(() => undefined)).toBeUndefined();
   });
 
   it("reclaims an expired owner", async () => {
@@ -88,6 +89,7 @@ describe("ActivityGuard", () => {
       hostname: "host-a",
     });
     await first.acquire({ sessionOpen: true });
+    await first.complete(true);
     now = new Date("2026-08-08T12:00:31Z");
     const second = new ActivityGuard({
       idleTimeoutMs: 30_000,
@@ -119,6 +121,29 @@ describe("ActivityGuard", () => {
     await guard.release();
   });
 
+  it("does not reclaim an expired record while its local operation is active", async () => {
+    let now = new Date("2026-08-08T12:00:00Z");
+    const first = new ActivityGuard({
+      idleTimeoutMs: 30_000,
+      env,
+      now: () => now,
+      pid: process.pid,
+    });
+    await first.acquire({ operation: "long-running-test", sessionOpen: true });
+
+    now = new Date("2026-08-08T12:00:31Z");
+    const second = new ActivityGuard({
+      idleTimeoutMs: 30_000,
+      env,
+      now: () => now,
+      pid: process.pid,
+    });
+    await expect(second.acquire()).rejects.toMatchObject({ code: "KNAPPER_BUSY" });
+
+    await first.complete(false);
+    await first.release();
+  });
+
   it("refuses to release ownership while the managed session is open", async () => {
     const guard = new ActivityGuard({ idleTimeoutMs: 30_000, env, pid: process.pid });
     await guard.acquire({ sessionOpen: true });
@@ -128,6 +153,28 @@ describe("ActivityGuard", () => {
 
     await guard.acquire({ sessionOpen: false });
     await guard.complete(false);
+    await guard.release();
+  });
+
+  it("reports a completion failure and repairs its operation count on the next call", async () => {
+    const errors: unknown[] = [];
+    const guard = new ActivityGuard({
+      idleTimeoutMs: 30_000,
+      env,
+      pid: process.pid,
+      onError: (error) => errors.push(error),
+    });
+    await guard.acquire({ sessionOpen: true });
+    await chmod(root, 0o500);
+    try {
+      await expect(guard.complete(true)).rejects.toBeDefined();
+      expect(errors).toHaveLength(1);
+    } finally {
+      await chmod(root, 0o700);
+    }
+    await guard.acquire({ sessionOpen: false });
+    await guard.complete(false);
+    expect(await guard.status()).toMatchObject({ activeOperations: 0, sessionOpen: false });
     await guard.release();
   });
 });

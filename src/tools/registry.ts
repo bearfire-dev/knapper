@@ -340,8 +340,10 @@ export class ToolRegistry {
    * connection setup and error mapping live in exactly one place.
    */
   bind(server: McpServer): void {
+    let registered = 0;
     for (const def of this.definitions.values()) {
       if (!this.isDefinitionEnabled(def)) continue;
+      registered += 1;
       const config: Record<string, unknown> = { description: def.description };
       const shape = def.jsonInputSchema
         ? jsonSchemaToZodShape(def.jsonInputSchema)
@@ -478,6 +480,6 @@ export class ToolRegistry {
         }) as never,
       );
     }
-    this.logger.info(`registered ${this.definitions.size} tools`, this.byToolset());
+    this.logger.info(`registered ${registered} tools`, this.byToolset());
   }
 }

@@ -30,7 +30,8 @@ when Knapper starts a test instance. Each private instance needs its own CLI soc
 | macOS    | `os.homedir()`, environment excluded | shared, only via a `HOME` override, unproven |
 | Windows  | `\\.\pipe\obsidian-cli-<username>`   | **impossible** — no environment input at all |
 
-Knapper refuses any launch that cannot isolate the private profile and CLI socket.
+Knapper refuses any managed private-session launch that cannot isolate the private
+profile and CLI socket.
 It never routes a call to an unverified Obsidian process.
 
 CI runs `ubuntu-latest` only, and covers lint, types, unit tests, and a packaged
@@ -202,9 +203,13 @@ Then point your client at `node /absolute/path/to/dist/cli.js`.
 Start one session before you use Obsidian:
 
 1. Call **`obsidian_session_open`** with the plugin source and ID when you need a private test session.
-2. Call **`obsidian_status`** to confirm that the session is `self` and that the target is ready.
-3. Apply the fixes that doctor names. These are usually **`obsidian_setup_cli`** and
-   **`obsidian_launch`** for the default profile. Private sessions start ready.
+2. Call **`obsidian_session_status`** to check the session state and readiness.
+3. Call **`obsidian_status`** to confirm that Knapper owns the target as `self`.
+4. Apply the fixes that doctor names. These are usually **`obsidian_setup_cli`** and
+   **`obsidian_launch`** for the default profile.
+
+Do not assume that an open session is ready. Retry the status checks after Knapper
+reports a startup state, and use the reported remediation before you continue.
 
 Then the development loop: **`obsidian_link_plugin`** to symlink your build output
 into a vault, build, and **`obsidian_dev_cycle`** to reload the plugin and report
@@ -266,26 +271,30 @@ Knapper keeps the profile and `XDG_RUNTIME_DIR` private for managed sessions.
 
 Set options via **environment variables** (and a subset via CLI flags). See [docs/configuration.md](docs/configuration.md) for examples.
 
-| Setting             | Env var                  | CLI flag         | Default                                         |
-| ------------------- | ------------------------ | ---------------- | ----------------------------------------------- |
-| CDP URL             | `OBSIDIAN_CDP_URL`       | `--cdp-url`      | `http://127.0.0.1:9222`                         |
-| Obsidian binary     | `OBSIDIAN_BIN`           | `--obsidian-bin` | OS default                                      |
-| Default vault       | `OBSIDIAN_VAULT`         | `--vault`, `-v`  | (active / unset)                                |
-| Toolsets            | `KNAP_TOOLSETS`          | `--toolsets`     | core, UI, telemetry, plugin development, editor |
-| knapper's disk root | `KNAP_HOME`              | —                | `~/.knapper_mcp`                                |
-| Log level           | `KNAP_LOG_LEVEL`         | `--log-level`    | `info`                                          |
-| Telemetry buffer    | `KNAP_TELEMETRY_BUFFER`  | —                | `2000`                                          |
-| Network capture     | `KNAP_TELEMETRY_NETWORK` | —                | `false`                                         |
-| CDP reconnect delay | `KNAP_RECONNECT_MS`      | —                | `2000`                                          |
-| Screenshot dir      | `KNAP_SCREENSHOT_DIR`    | `--output-dir`   | `./.knapper`                                    |
-| CLI timeout         | `KNAP_CLI_TIMEOUT_MS`    | —                | `15000`                                         |
-| Session cleanup     | `KNAP_IDLE_TIMEOUT_MS`   | —                | `86400000` (24 hours)                           |
-| Activity ownership  | `KNAP_ACTIVITY_IDLE_MS`  | —                | `300000` (5 minutes)                            |
-| Command transport   | `KNAP_COMMAND_TRANSPORT` | —                | `auto` (`cli` or `playwright`)                  |
-| Window match        | `OBSIDIAN_TARGET_MATCH`  | `--target-match` | (unset)                                         |
-| Transport           | `MCP_TRANSPORT`          | `--transport`    | `stdio`                                         |
-| HTTP port           | `MCP_PORT`               | `--port`         | `9223`                                          |
-| HTTP host           | `MCP_HOST`               | `--host`         | `127.0.0.1`                                     |
+| Setting             | Env var                  | CLI flag         | Default                                 |
+| ------------------- | ------------------------ | ---------------- | --------------------------------------- |
+| CDP URL             | `OBSIDIAN_CDP_URL`       | `--cdp-url`      | `http://127.0.0.1:9222`                 |
+| Obsidian binary     | `OBSIDIAN_BIN`           | `--obsidian-bin` | OS default                              |
+| Default vault       | `OBSIDIAN_VAULT`         | `--vault`, `-v`  | (active / unset)                        |
+| Toolsets            | `KNAP_TOOLSETS`          | `--toolsets`     | core, ui, telemetry, plugin-dev, editor |
+| knapper's disk root | `KNAP_HOME`              | —                | `~/.knapper_mcp`                        |
+| Log level           | `KNAP_LOG_LEVEL`         | `--log-level`    | `info`                                  |
+| Telemetry buffer    | `KNAP_TELEMETRY_BUFFER`  | —                | `2000`                                  |
+| Network capture     | `KNAP_TELEMETRY_NETWORK` | —                | `false`                                 |
+| CDP reconnect delay | `KNAP_RECONNECT_MS`      | —                | `2000`                                  |
+| Screenshot dir      | `KNAP_SCREENSHOT_DIR`    | `--output-dir`   | `./.knapper`                            |
+| CLI timeout         | `KNAP_CLI_TIMEOUT_MS`    | —                | `15000`                                 |
+| Session cleanup     | `KNAP_IDLE_TIMEOUT_MS`   | —                | `86400000` (24 hours)                   |
+| Activity ownership  | `KNAP_ACTIVITY_IDLE_MS`  | —                | `300000` (5 minutes)                    |
+| Command transport   | `KNAP_COMMAND_TRANSPORT` | —                | `auto` (`cli` or `playwright`)          |
+| Window match        | `OBSIDIAN_TARGET_MATCH`  | `--target-match` | (unset)                                 |
+| Transport           | `MCP_TRANSPORT`          | `--transport`    | `stdio`                                 |
+| HTTP port           | `MCP_PORT`               | `--port`         | `9223`                                  |
+| HTTP host           | `MCP_HOST`               | `--host`         | `127.0.0.1`                             |
+
+The default `core` toolset includes raw Obsidian CLI dispatch and renderer
+JavaScript evaluation. Set `KNAP_TOOLSETS` without `core` when a client must not
+have these capabilities.
 
 `LOG_LEVEL`, `RECONNECT_MS`, and `SCREENSHOT_DIR` are also accepted as aliases; the `KNAP_`-prefixed name wins when both are set.
 
@@ -326,6 +335,10 @@ Knapper publishes the complete startup surface during MCP initialization. The to
 list does not change during a connection. Do not change the tool list after startup.
 The fixed surface includes session lifecycle, status, plugin development, telemetry,
 editor, UI, and opt-in vault tools.
+
+The session lifecycle tools are always available. They stay available when
+`KNAP_TOOLSETS` excludes `core`, so an agent can open, inspect, release, or reset
+the active session. `KNAP_TOOLSETS` controls the other toolsets at startup.
 
 ### Representative tools
 
@@ -441,7 +454,7 @@ npm run versions:check   # CI gate: fail on drift
 same flow as anything else:
 
 ```bash
-git checkout -b release/v0.7.0-beta.1 dev
+git checkout -b feature/release-v0.7.0-beta.1 dev
 npm version 0.7.0-beta.1 --no-git-tag-version && npm run versions:sync
 # PR into dev, then promote dev -> master
 ```

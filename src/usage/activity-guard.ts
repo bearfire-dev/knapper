@@ -40,6 +40,7 @@ export interface ActivityGuardOptions {
   now?: () => Date;
   pid?: number;
   hostname?: string;
+  onError?: (error: unknown) => void;
 }
 
 export interface AcquireOptions {
@@ -47,7 +48,7 @@ export interface AcquireOptions {
   sessionOpen?: boolean;
 }
 
-const recordName = "usage.json";
+export const ACTIVITY_RECORD_NAME = "usage.json";
 const lockName = "usage.lock";
 
 /** A single, cross-process activity lane for the managed Obsidian instance. */
@@ -76,7 +77,7 @@ export class ActivityGuard {
   }
 
   private path(): string {
-    return join(knapperHome(this.env), recordName);
+    return join(knapperHome(this.env), ACTIVITY_RECORD_NAME);
   }
 
   private async read(): Promise<ActivityRecord | undefined> {
@@ -123,10 +124,9 @@ export class ActivityGuard {
   private startHeartbeat(): void {
     if (this.heartbeatTimer !== undefined) clearInterval(this.heartbeatTimer);
     const intervalMs = Math.max(250, Math.floor(this.opts.idleTimeoutMs / 3));
-    this.heartbeatTimer = setInterval(
-      () => void this.heartbeat().catch(() => undefined),
-      intervalMs,
-    );
+    this.heartbeatTimer = setInterval(() => {
+      void this.heartbeat().catch((error) => this.opts.onError?.(error));
+    }, intervalMs);
     this.heartbeatTimer.unref();
   }
 
@@ -151,7 +151,7 @@ export class ActivityGuard {
     if (value === undefined) return { state: "free" };
     const owner = this.withoutToken(value);
     const dead = !(await this.ownerAlive(value));
-    const old = this.expired(value);
+    const old = value.activeOperations === 0 && this.expired(value);
     if (dead || old) {
       return {
         state: "stale",
@@ -189,7 +189,9 @@ export class ActivityGuard {
       const own = existing?.token === this.token;
       const reclaimable =
         existing === undefined ||
-        (existing !== undefined && (!(await this.ownerAlive(existing)) || this.expired(existing)));
+        (existing !== undefined &&
+          (!(await this.ownerAlive(existing)) ||
+            (existing.activeOperations === 0 && this.expired(existing))));
       if (
         !own &&
         !reclaimable &&
@@ -216,7 +218,9 @@ export class ActivityGuard {
         hostname: this.host,
         acquiredAt: own && existing ? existing.acquiredAt : now.toISOString(),
         lastActivityAt: now.toISOString(),
-        activeOperations: own && existing ? existing.activeOperations + 1 : 1,
+        // Tool dispatch is a single FIFO lane. Resetting this value also repairs
+        // a record left active by a failed completion write.
+        activeOperations: 1,
         ...(options.operation ? { currentOperation: options.operation } : {}),
         sessionOpen: options.sessionOpen ?? (own && existing ? existing.sessionOpen : false),
       };
@@ -227,23 +231,27 @@ export class ActivityGuard {
   }
 
   async complete(sessionOpen?: boolean): Promise<void> {
-    await withFileLock(join(knapperHome(this.env), lockName), async () => {
-      const existing = await this.read();
-      if (existing?.token !== this.token) {
+    try {
+      await withFileLock(join(knapperHome(this.env), lockName), async () => {
+        const existing = await this.read();
+        if (existing?.token !== this.token) {
+          this.stopHeartbeat();
+          return;
+        }
+        const { currentOperation: _currentOperation, ...record } = existing;
+        await this.write({
+          ...record,
+          lastActivityAt: this.now().toISOString(),
+          activeOperations: 0,
+          ...(sessionOpen === undefined ? {} : { sessionOpen }),
+        });
         this.stopHeartbeat();
-        return;
-      }
-      const activeOperations = Math.max(0, existing.activeOperations - 1);
-      const { currentOperation, ...record } = existing;
-      await this.write({
-        ...record,
-        lastActivityAt: this.now().toISOString(),
-        activeOperations,
-        ...(activeOperations > 0 && currentOperation !== undefined ? { currentOperation } : {}),
-        ...(sessionOpen === undefined ? {} : { sessionOpen }),
       });
-      if (activeOperations === 0) this.stopHeartbeat();
-    });
+    } catch (error) {
+      this.stopHeartbeat();
+      this.opts.onError?.(error);
+      throw error;
+    }
   }
 
   async release(): Promise<void> {

@@ -345,7 +345,7 @@ export function registerProvisioningTools(ctx: ServerContext): void {
       const targetVault = vaultArg ?? config.vault;
 
       let health = await router.health({
-        skipCliProbe: config.sessionId === undefined,
+        skipCliProbe: ctx.targetKind !== "isolated",
       });
       const availability = await router.refreshAvailability(true);
 
@@ -414,7 +414,7 @@ export function registerProvisioningTools(ctx: ServerContext): void {
       // Which instance this server drives, and how well CLI commands are pinned to
       // it. `shared` means a CLI call may land in whichever Obsidian booted last,
       // which is worth saying out loud because nothing else reports it.
-      if (config.sessionId !== undefined) {
+      if (ctx.targetKind === "isolated") {
         lines.push(
           "Active target: isolated",
           ...(full ? [`Profile: ${config.userDataDir}`] : []),
@@ -782,10 +782,11 @@ export function registerProvisioningTools(ctx: ServerContext): void {
         .optional()
         .describe("Cold-restart Obsidian afterwards so the vault is immediately usable"),
     },
+    annotations: { readOnlyHint: false, destructiveHint: true },
     handler: async (args) => {
       const path = args.path as string;
 
-      if (config.sessionId !== undefined) {
+      if (ctx.targetKind === "isolated") {
         throw new UobError(
           "INVALID_ARGUMENT",
           "An isolated session cannot add another vault to its private profile.",
@@ -898,7 +899,7 @@ export function registerProvisioningTools(ctx: ServerContext): void {
         .string()
         .describe("Registered vault name, or an absolute path to the vault directory"),
     },
-    annotations: { destructiveHint: true },
+    annotations: { readOnlyHint: false, destructiveHint: true },
     handler: async (args) => {
       const wanted = args.vault as string;
 
@@ -948,7 +949,7 @@ export function registerProvisioningTools(ctx: ServerContext): void {
     },
     // Replaces an existing symlink at the target path, and unlink=true removes one.
     // It refuses to clobber a real directory, but the link itself is still lost.
-    annotations: { destructiveHint: true },
+    annotations: { readOnlyHint: false, destructiveHint: true },
     handler: async (args) => {
       const vault = args.vault as string;
       const sourceDir = args.sourceDir as string;

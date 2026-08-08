@@ -38,14 +38,22 @@ hard-deletes the root.
 
 ## Tool surface
 
-| Environment variable  | CLI flag       | Default                                         | Purpose                       |
-| --------------------- | -------------- | ----------------------------------------------- | ----------------------------- |
-| `KNAP_TOOLSETS`       | `--toolsets`   | core, UI, telemetry, plugin development, editor | Startup toolset selection     |
-| `KNAP_SCREENSHOT_DIR` | `--output-dir` | `./.knapper`                                    | Default-profile artifact root |
+| Environment variable  | CLI flag       | Default                                 | Purpose                       |
+| --------------------- | -------------- | --------------------------------------- | ----------------------------- |
+| `KNAP_TOOLSETS`       | `--toolsets`   | core, ui, telemetry, plugin-dev, editor | Startup toolset selection     |
+| `KNAP_SCREENSHOT_DIR` | `--output-dir` | `./.knapper`                            | Default-profile artifact root |
 
 Knapper publishes the complete tool surface during MCP initialization. The list
 does not change during a connection. Do not change the tool list after startup.
 Knapper runs one operation at a time.
+
+The session lifecycle tools are always available. They stay available when
+`KNAP_TOOLSETS` excludes `core`, so an agent can open, inspect, release, or reset
+the active session. `KNAP_TOOLSETS` controls the other toolsets at startup.
+
+The default `core` toolset includes `obsidian_eval` and `obsidian_cli`. These tools
+can run renderer JavaScript and raw Obsidian CLI commands. Remove `core` from an
+explicit `KNAP_TOOLSETS` value when a client must not have those capabilities.
 
 ## Structured output
 
@@ -105,8 +113,8 @@ The managed session uses `KNAP_HOME/telemetry/session.jsonl`. Knapper
 writes redacted tool audit events under `KNAP_HOME/audit`. Audit files use mode
 `0600` and have 14-day retention.
 
-Session reset archives its telemetry in the quarantined root. Session release keeps
-the telemetry file ready for the next agent that claims the same session.
+Session reset archives its telemetry in the quarantined root. Session release does
+not archive telemetry because it keeps the private session ready for reuse.
 
 `LOG_LEVEL`, `RECONNECT_MS`, and `SCREENSHOT_DIR` are supported aliases. The
 `KNAP_` name takes precedence.
