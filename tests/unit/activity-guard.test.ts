@@ -17,6 +17,12 @@ afterEach(async () => {
 });
 
 describe("ActivityGuard", () => {
+  it("rejects an idle window shorter than the heartbeat floor", () => {
+    expect(() => new ActivityGuard({ idleTimeoutMs: 999, env })).toThrow(
+      "activity idle timeout must be at least 1000 ms",
+    );
+  });
+
   it("starts free, tracks an operation, and does not renew from status", async () => {
     let now = new Date("2026-08-08T12:00:00Z");
     const first = new ActivityGuard({

@@ -39,13 +39,11 @@ function compatible(
   return true;
 }
 
-async function singletonDescriptor(
+export function selectSingletonDescriptor(
+  descriptors: SessionDescriptor[],
   pluginSourceDir?: string,
   pluginId?: string,
-): Promise<SessionDescriptor | undefined> {
-  const descriptors = (await listDescriptors()).filter(
-    (descriptor) => descriptor.readiness.phase !== "failed",
-  );
+): SessionDescriptor | undefined {
   if (descriptors.length === 0) return undefined;
   const descriptor = descriptors.at(-1) as SessionDescriptor;
   if (!compatible(descriptor, pluginSourceDir, pluginId)) {
@@ -61,22 +59,36 @@ async function singletonDescriptor(
   return descriptor;
 }
 
+async function singletonDescriptor(
+  pluginSourceDir?: string,
+  pluginId?: string,
+): Promise<SessionDescriptor | undefined> {
+  return selectSingletonDescriptor(await listDescriptors(), pluginSourceDir, pluginId);
+}
+
 async function makeReady(
   ctx: ServerContext,
   descriptor: SessionDescriptor,
   timeoutMs?: number,
 ): Promise<SessionDescriptor> {
+  const startedAt = Date.now();
+  const remainingOptions = (): { timeoutMs?: number } =>
+    timeoutMs === undefined ? {} : { timeoutMs: Math.max(1, timeoutMs - (Date.now() - startedAt)) };
   let next = descriptor;
   if (next.readiness.phase === "starting") {
-    next = await waitSession(next.key, timeoutMs !== undefined ? { timeoutMs } : {});
-  } else if (next.readiness.phase === "stopped" || (await sessionState(next)) !== "live") {
+    next = await waitSession(next.key, remainingOptions());
+  } else if (
+    next.readiness.phase === "failed" ||
+    next.readiness.phase === "stopped" ||
+    (await sessionState(next)) !== "live"
+  ) {
     const restarted = await restartSession(next.key, {
       logger: ctx.logger.child("session"),
-      ...(timeoutMs !== undefined ? { timeoutMs } : {}),
+      ...remainingOptions(),
     });
     next = restarted.descriptor;
     if (next.readiness.phase === "starting") {
-      next = await waitSession(next.key, timeoutMs !== undefined ? { timeoutMs } : {});
+      next = await waitSession(next.key, remainingOptions());
     }
   }
   await ctx.bindSession(next);
@@ -240,11 +252,19 @@ export function registerSessionTools(ctx: ServerContext): void {
     },
     handler: async (args) => {
       const timeoutMs = typeof args.timeoutMs === "number" ? args.timeoutMs : undefined;
+      const startedAt = Date.now();
+      const remainingTimeout = (): number | undefined =>
+        timeoutMs === undefined ? undefined : Math.max(1, timeoutMs - (Date.now() - startedAt));
       const descriptors = await listDescriptors();
       const previous = ctx.currentSessionKey ?? descriptors.at(-1)?.key;
       let quarantinedPath: string | undefined;
+      let archivedTelemetry: string | undefined;
       if (previous !== undefined) {
-        const stopped = await stopSession(previous, timeoutMs !== undefined ? { timeoutMs } : {});
+        const stopTimeout = remainingTimeout();
+        const stopped = await stopSession(
+          previous,
+          stopTimeout !== undefined ? { timeoutMs: stopTimeout } : {},
+        );
         if (stopped.state === "quitFailed") {
           throw new UobError("TIMEOUT", `Session ${previous} did not stop.`, {
             remediation: "Retry after the managed Obsidian process stops.",
@@ -255,12 +275,21 @@ export function registerSessionTools(ctx: ServerContext): void {
       await ctx.bindDefault();
       ctx.currentSessionKey = undefined;
       ctx.targetKind = undefined;
-      const descriptor = await openIsolated(ctx, args);
+      ctx.selectTelemetry("default");
+      if (quarantinedPath !== undefined) {
+        archivedTelemetry = await ctx.archiveTelemetry("session", quarantinedPath);
+      }
+      const nextTimeout = remainingTimeout();
+      const descriptor = await openIsolated(ctx, {
+        ...args,
+        ...(nextTimeout !== undefined ? { timeoutMs: nextTimeout } : {}),
+      });
       return {
         text: `Fresh isolated session ${descriptor.key} is ready.`,
         json: {
           reset: previous ?? null,
           quarantinedPath: quarantinedPath ?? null,
+          archivedTelemetry: archivedTelemetry ?? null,
           ...publicSummary(descriptor),
         },
       };

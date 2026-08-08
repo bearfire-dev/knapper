@@ -101,12 +101,12 @@ the package manager that supplied `installedPackage`.
 | `KNAP_RECONNECT_MS`      | `2000`  | Telemetry reconnect delay        |
 
 Knapper writes default-profile telemetry to `KNAP_HOME/telemetry/events.jsonl`.
-Each managed session uses the shared telemetry file in that directory. Knapper
+The managed session uses `KNAP_HOME/telemetry/session.jsonl`. Knapper
 writes redacted tool audit events under `KNAP_HOME/audit`. Audit files use mode
 `0600` and have 14-day retention.
 
-Session release and reset operations archive telemetry records. They store retained
-records in the managed or quarantined root.
+Session reset archives its telemetry in the quarantined root. Session release keeps
+the telemetry file ready for the next agent that claims the same session.
 
 `LOG_LEVEL`, `RECONNECT_MS`, and `SCREENSHOT_DIR` are supported aliases. The
 `KNAP_` name takes precedence.

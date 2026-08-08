@@ -371,86 +371,110 @@ export class ToolRegistry {
           const callRequestId = requestId(requestContext);
           const callArgs = args ?? {};
           let queueMs = 0;
-          let admitted = false;
           let auditContext: AuditCallContext | undefined;
           let auditOutcome: "success" | "error" = "success";
           let auditError: AuditErrorEnvelope | undefined;
           let completedOutcome: ToolOutcome | UobError | undefined;
-          return this.lock.run("exclusive", def.name, async () => {
-            try {
-              // Read the telemetry cursor after admission, not before: a call that
-              // waited in the queue would otherwise report every log line produced
-              // by the calls it was queued behind.
-              const sinceSeq = this.telemetry?.cursor ?? 0;
-              const ranAt = Date.now();
-              admitted = true;
-              queueMs = ranAt - started;
-              await this.hooks.beforeInvoke?.(def, callArgs, requestContext);
-              auditContext = await this.hooks.contextProvider?.(callArgs, requestContext);
-              let outcome = await def.handler(callArgs);
-              completedOutcome = outcome;
-              if (
-                this.telemetry &&
-                def.annotations?.readOnlyHint !== true &&
-                def.handlesOwnTelemetry !== true
-              ) {
-                outcome = withTelemetrySuffix(outcome, this.telemetry, sinceSeq);
-              }
-              this.logger.debug("tool ok", {
-                tool: def.name,
-                ms: Date.now() - ranAt,
-                queuedMs: ranAt - started,
-              });
-              const result = normalize(outcome);
-              if (result.isError === true) {
+          try {
+            return await this.lock.run("exclusive", def.name, async () => {
+              try {
+                // Read the telemetry cursor after admission, not before: a call that
+                // waited in the queue would otherwise report every log line produced
+                // by the calls it was queued behind.
+                const sinceSeq = this.telemetry?.cursor ?? 0;
+                const ranAt = Date.now();
+                queueMs = ranAt - started;
+                await this.hooks.beforeInvoke?.(def, callArgs, requestContext);
+                auditContext = await this.hooks.contextProvider?.(callArgs, requestContext);
+                let outcome = await def.handler(callArgs);
+                completedOutcome = outcome;
+                if (
+                  this.telemetry &&
+                  def.annotations?.readOnlyHint !== true &&
+                  def.handlesOwnTelemetry !== true
+                ) {
+                  outcome = withTelemetrySuffix(outcome, this.telemetry, sinceSeq);
+                }
+                this.logger.debug("tool ok", {
+                  tool: def.name,
+                  ms: Date.now() - ranAt,
+                  queuedMs: ranAt - started,
+                });
+                const result = normalize(outcome);
+                if (result.isError === true) {
+                  auditOutcome = "error";
+                  auditError = {
+                    type: "ToolResultError",
+                    code: "TOOL_ERROR",
+                    message: "The tool call failed.",
+                    retriable: false,
+                  };
+                }
+                return result;
+              } catch (e) {
+                const err = toUobError(e);
+                completedOutcome = err;
                 auditOutcome = "error";
-                auditError = {
-                  type: "ToolResultError",
-                  code: "TOOL_ERROR",
-                  message: "The tool call failed.",
-                  retriable: false,
-                };
-              }
-              return result;
-            } catch (e) {
-              const err = toUobError(e);
-              completedOutcome = err;
-              auditOutcome = "error";
-              auditError = errorEnvelope(err);
-              this.logger.warn("tool failed", {
-                tool: def.name,
-                code: err.code,
-                ms: Date.now() - started,
-              });
-              return errorResult(err);
-            } finally {
-              if (completedOutcome !== undefined) {
-                try {
-                  await this.hooks.afterInvoke?.(def, callArgs, requestContext, completedOutcome);
-                } catch (hookError) {
-                  this.logger.warn("afterInvoke hook failed", {
-                    tool: def.name,
-                    error: hookError instanceof Error ? hookError.name : "UnknownHookError",
-                  });
+                auditError = errorEnvelope(err);
+                this.logger.warn("tool failed", {
+                  tool: def.name,
+                  code: err.code,
+                  ms: Date.now() - started,
+                });
+                return errorResult(err);
+              } finally {
+                if (completedOutcome !== undefined) {
+                  try {
+                    await this.hooks.afterInvoke?.(def, callArgs, requestContext, completedOutcome);
+                  } catch (hookError) {
+                    this.logger.warn("afterInvoke hook failed", {
+                      tool: def.name,
+                      error: hookError instanceof Error ? hookError.name : "UnknownHookError",
+                    });
+                  }
+                }
+                if (this.audit !== false) {
+                  this.queueAudit(
+                    toolAuditEvent({
+                      timestamp,
+                      requestId: callRequestId,
+                      tool: def.name,
+                      durationMs: Date.now() - started,
+                      queueMs,
+                      outcome: auditOutcome,
+                      args: callArgs,
+                      ...(auditContext ? { context: auditContext } : {}),
+                      ...(auditError ? { error: auditError } : {}),
+                    }),
+                  );
                 }
               }
-              if (this.audit !== false) {
-                this.queueAudit(
-                  toolAuditEvent({
-                    timestamp,
-                    requestId: callRequestId,
-                    tool: def.name,
-                    durationMs: Date.now() - started,
-                    queueMs: admitted ? queueMs : Date.now() - started,
-                    outcome: auditOutcome,
-                    args: callArgs,
-                    ...(auditContext ? { context: auditContext } : {}),
-                    ...(auditError ? { error: auditError } : {}),
-                  }),
-                );
-              }
+            });
+          } catch (e) {
+            const err = toUobError(e);
+            auditOutcome = "error";
+            auditError = errorEnvelope(err);
+            this.logger.warn("tool failed before admission", {
+              tool: def.name,
+              code: err.code,
+              ms: Date.now() - started,
+            });
+            if (this.audit !== false) {
+              this.queueAudit(
+                toolAuditEvent({
+                  timestamp,
+                  requestId: callRequestId,
+                  tool: def.name,
+                  durationMs: Date.now() - started,
+                  queueMs: Date.now() - started,
+                  outcome: auditOutcome,
+                  args: callArgs,
+                  error: auditError,
+                }),
+              );
             }
-          });
+            return errorResult(err);
+          }
         }) as never,
       );
     }
