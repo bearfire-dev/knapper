@@ -69,11 +69,10 @@ async function singletonDescriptor(
 async function makeReady(
   ctx: ServerContext,
   descriptor: SessionDescriptor,
-  timeoutMs?: number,
+  deadline?: number,
 ): Promise<SessionDescriptor> {
-  const startedAt = Date.now();
   const remainingOptions = (): { timeoutMs?: number } =>
-    timeoutMs === undefined ? {} : { timeoutMs: Math.max(1, timeoutMs - (Date.now() - startedAt)) };
+    deadline === undefined ? {} : { timeoutMs: Math.max(1, deadline - Date.now()) };
   let next = descriptor;
   if (next.readiness.phase === "starting") {
     next = await waitSession(next.key, remainingOptions());
@@ -99,11 +98,16 @@ async function makeReady(
 async function openIsolated(
   ctx: ServerContext,
   args: Record<string, unknown>,
+  inheritedDeadline?: number,
 ): Promise<SessionDescriptor> {
   const pluginSourceDir =
     typeof args.pluginSourceDir === "string" ? args.pluginSourceDir : undefined;
   const pluginId = typeof args.pluginId === "string" ? args.pluginId : undefined;
   const timeoutMs = typeof args.timeoutMs === "number" ? args.timeoutMs : undefined;
+  const deadline =
+    inheritedDeadline ?? (timeoutMs === undefined ? undefined : Date.now() + timeoutMs);
+  const timeoutOptions = (): { timeoutMs?: number } =>
+    deadline === undefined ? {} : { timeoutMs: Math.max(1, deadline - Date.now()) };
   let descriptor = await singletonDescriptor(pluginSourceDir, pluginId);
   if (descriptor === undefined) {
     descriptor = await createSession({
@@ -112,10 +116,10 @@ async function openIsolated(
       ...(typeof args.label === "string" ? { label: args.label } : {}),
       ...(pluginSourceDir !== undefined ? { pluginSourceDir } : {}),
       ...(pluginId !== undefined ? { pluginId } : {}),
-      ...(timeoutMs !== undefined ? { timeoutMs } : {}),
+      ...timeoutOptions(),
     });
   }
-  return makeReady(ctx, descriptor, timeoutMs);
+  return makeReady(ctx, descriptor, deadline);
 }
 
 export function registerSessionTools(ctx: ServerContext): void {
@@ -252,9 +256,9 @@ export function registerSessionTools(ctx: ServerContext): void {
     },
     handler: async (args) => {
       const timeoutMs = typeof args.timeoutMs === "number" ? args.timeoutMs : undefined;
-      const startedAt = Date.now();
+      const deadline = timeoutMs === undefined ? undefined : Date.now() + timeoutMs;
       const remainingTimeout = (): number | undefined =>
-        timeoutMs === undefined ? undefined : Math.max(1, timeoutMs - (Date.now() - startedAt));
+        deadline === undefined ? undefined : Math.max(1, deadline - Date.now());
       const descriptors = await listDescriptors();
       const previous = ctx.currentSessionKey ?? descriptors.at(-1)?.key;
       let quarantinedPath: string | undefined;
@@ -279,11 +283,7 @@ export function registerSessionTools(ctx: ServerContext): void {
       if (quarantinedPath !== undefined) {
         archivedTelemetry = await ctx.archiveTelemetry("session", quarantinedPath);
       }
-      const nextTimeout = remainingTimeout();
-      const descriptor = await openIsolated(ctx, {
-        ...args,
-        ...(nextTimeout !== undefined ? { timeoutMs: nextTimeout } : {}),
-      });
+      const descriptor = await openIsolated(ctx, args, deadline);
       return {
         text: `Fresh isolated session ${descriptor.key} is ready.`,
         json: {
