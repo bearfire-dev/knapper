@@ -125,7 +125,7 @@ export class ActivityGuard {
     if (this.heartbeatTimer !== undefined) clearInterval(this.heartbeatTimer);
     const intervalMs = Math.max(250, Math.floor(this.opts.idleTimeoutMs / 3));
     this.heartbeatTimer = setInterval(() => {
-      void this.heartbeat().catch((error) => this.reportError(error));
+      void this.heartbeat().catch((error) => this.opts.onError?.(error));
     }, intervalMs);
     this.heartbeatTimer.unref();
   }
@@ -133,11 +133,6 @@ export class ActivityGuard {
   private stopHeartbeat(): void {
     if (this.heartbeatTimer !== undefined) clearInterval(this.heartbeatTimer);
     this.heartbeatTimer = undefined;
-  }
-
-  private reportError(error: unknown): void {
-    this.stopHeartbeat();
-    this.opts.onError?.(error);
   }
 
   async heartbeat(): Promise<void> {
@@ -253,7 +248,8 @@ export class ActivityGuard {
         this.stopHeartbeat();
       });
     } catch (error) {
-      this.reportError(error);
+      this.stopHeartbeat();
+      this.opts.onError?.(error);
       throw error;
     }
   }
