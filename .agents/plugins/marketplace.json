@@ -1,13 +1,13 @@
 {
   "name": "knapper",
-  "description": "MCP server for stateless Obsidian plugin development with one managed session, browser automation, and debugging.",
+  "description": "MCP server for Obsidian plugin development with one private vault, popout-aware UI automation, and logs.",
   "interface": {
     "displayName": "Knapper"
   },
   "plugins": [
     {
       "name": "knapper",
-      "description": "MCP server for stateless Obsidian plugin development with one managed session, browser automation, and debugging.",
+      "description": "MCP server for Obsidian plugin development with one private vault, popout-aware UI automation, and logs.",
       "source": {
         "source": "local",
         "path": "./"

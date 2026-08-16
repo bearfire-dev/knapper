@@ -10,7 +10,7 @@ import { z } from "zod";
 import type { ServerContext } from "../server.js";
 import { renderResult } from "../util/serialize.js";
 import { fetchTargets, classifyTargets } from "../connection/cdp/discover.js";
-import { TOOLSETS, TOOLSET_DESCRIPTIONS } from "../toolsets.js";
+import { TOOLSETS } from "../toolsets.js";
 import { UobError } from "../util/errors.js";
 import { CAPABILITIES, CAPABILITY_PREFERENCE } from "../capabilities.js";
 import { readDescriptor } from "../session/descriptor.js";
@@ -32,60 +32,44 @@ export function registerCoreTools(ctx: ServerContext): void {
     alwaysEnabled: true,
     targetIndependent: true,
     description:
-      "Report which transports are reachable, which Obsidian windows are attached, and which " +
-      "toolsets are enabled. Cheap and safe to call first in a session. For a full diagnosis with " +
-      "remediation steps, use obsidian_doctor instead.",
+      "Report the active development vault, linked plugin, transports, main window, and popouts.",
     annotations: { readOnlyHint: true },
     inputSchema: {},
     handler: async () => {
+      const activity = await ctx.activity.status();
+      if (ctx.currentSessionKey === undefined || ctx.targetKind !== "isolated") {
+        return {
+          text: "No private Obsidian profile is open. Call obsidian_open with a Git-ignored vault path.",
+          json: {
+            active: false,
+            vaultPath: null,
+            plugin: null,
+            transports: { cli: false, playwright: false },
+            windows: [],
+            activity,
+          },
+        };
+      }
+
+      const descriptor = await readDescriptor(ctx.currentSessionKey);
       const availability = await router.refreshAvailability(true);
       const health = await router.health({ skipCliProbe: true });
-      const vaultStatus = await router.fence.status();
-      const authorized = vaultStatus.filter((v) => v.authorized);
       const windows = availability.playwright
         ? await router.playwright.windowSummaries().catch(() => [])
         : [];
-      const activity = await ctx.activity.status();
-      const descriptor =
-        ctx.currentSessionKey !== undefined
-          ? await readDescriptor(ctx.currentSessionKey)
-          : undefined;
-      const profile =
-        ctx.targetKind !== "isolated"
-          ? {
-              kind: (ctx.targetKind ?? "none") as "default" | "none",
-              sessionId: null,
-              userDataDir: null,
-              visualIdentity: null,
-            }
-          : {
-              kind: "private" as const,
-              sessionId: ctx.currentSessionKey ?? null,
-              userDataDir: config.userDataDir,
-              visualIdentity: descriptor?.visualIdentity ?? {
-                state: "degraded" as const,
-                warnings: ["Visual identity was not recorded."],
-              },
-            };
-
       const lines = [
+        `Vault: ${descriptor?.vault?.path ?? "unavailable"}`,
+        `Plugin: ${descriptor?.plugin?.id ?? "none linked"}`,
         `Obsidian running: ${health.running ? "yes" : "no"}`,
         `CLI transport: ${availability.cli ? "enabled" : "disabled"}`,
         `CDP transport: ${availability.playwright ? "attached" : "unavailable"}`,
-        `Windows attached: ${windows.length}`,
-        `Authorized vaults: ${
-          authorized.length === 0
-            ? "none — every vault-scoped tool will refuse"
-            : authorized.map((v) => `${v.name} (${v.grant})`).join(", ")
-        }`,
-        `Toolsets enabled: ${registry.toolsetState().enabled.join(", ")}`,
-        `Toolsets disabled: ${registry.toolsetState().disabled.join(", ") || "none"}`,
+        `Windows: ${windows.length}`,
+        ...windows.map(
+          (window) =>
+            `  ${window.kind} ${window.windowId}${window.title === undefined ? "" : ` — ${window.title}`}`,
+        ),
         `Agent use: ${activity.state}`,
-        `Profile identity: ${profile.kind}${profile.sessionId === null ? "" : ` (${profile.sessionId})`}`,
-        `Active target: ${ctx.targetKind ?? "none"}`,
-        ...(profile.visualIdentity === null
-          ? []
-          : [`Visual identity: ${profile.visualIdentity.state}`]),
+        `Profile identity: ${descriptor?.visualIdentity?.state ?? "degraded"}`,
       ];
       const commandTransport = router.commandTransportStatus;
       lines.push(
@@ -98,39 +82,25 @@ export function registerCoreTools(ctx: ServerContext): void {
       }
 
       if (health.problems.length > 0) {
-        lines.push(
-          "",
-          `${health.problems.length} problem(s) found — run obsidian_doctor for details.`,
-        );
+        lines.push("", `${health.problems.length} transport problem(s) found.`);
       }
 
       return {
         text: lines.join("\n"),
         json: {
+          active: true,
+          sessionId: ctx.currentSessionKey,
+          vaultPath: descriptor?.vault?.path ?? null,
+          plugin:
+            descriptor?.plugin === undefined
+              ? null
+              : { id: descriptor.plugin.id, dir: descriptor.plugin.sourceDir },
           transports: availability,
           commandTransport,
-          debuggerHeldBy: router.currentDebuggerHolder ?? null,
           windows,
-          vaults: vaultStatus.map((vault) =>
-            vault.authorized
-              ? {
-                  name: vault.name,
-                  open: vault.open,
-                  authorized: true,
-                  grant: vault.grant,
-                }
-              : { open: vault.open, authorized: false },
-          ),
-          toolsets: {
-            ...registry.toolsetState(),
-            available: Object.keys(TOOLSET_DESCRIPTIONS),
-          },
-          toolCounts: Object.fromEntries(
-            Object.entries(registry.byToolset()).map(([name, tools]) => [name, tools.length]),
-          ),
           problemCount: health.problems.length,
           activity,
-          profile,
+          visualIdentity: descriptor?.visualIdentity ?? null,
         },
       };
     },
@@ -361,28 +331,31 @@ export function registerCoreTools(ctx: ServerContext): void {
     toolset: "core",
     capability: "evaluate",
     description:
-      "Run JavaScript inside the Obsidian renderer with full access to the `app` object " +
-      "(app.vault, app.workspace, app.metadataCache, app.plugins). Accepts either a bare " +
-      "expression (`app.vault.getName()`) or a statement body with an explicit return. This is the " +
-      "most powerful tool here — prefer it over DOM scraping for reading vault or plugin state.",
+      "Run JavaScript in the main Obsidian renderer with its `app` object, or in a selected " +
+      "popout's DOM context. Accepts a bare expression or a statement body with an explicit return.",
     inputSchema: {
       code: z.string().describe("JavaScript to evaluate in the renderer"),
-      vault: z.string().optional().describe("Target vault name; overrides the session default"),
+      windowId: z
+        .string()
+        .optional()
+        .describe(
+          "Popout window id from obsidian_status or obsidian_snapshot. Omit for the main renderer and its app object.",
+        ),
     },
     // Arbitrary code against the live app: it can delete notes, disable plugins, or
     // reach the network. Annotated like browser_evaluate so clients prompt for it.
     annotations: { destructiveHint: true, openWorldHint: true },
     handler: async (args) => {
       const code = args.code as string;
-      const vault = args.vault as string | undefined;
+      const windowId = args.windowId as string | undefined;
       const { value, layer } = await router.evaluate<unknown>(
         code,
-        vault !== undefined ? { vault } : {},
+        windowId !== undefined ? { windowId } : {},
       );
       const rendered = renderResult(value);
       return {
         text: rendered.text,
-        json: { layer, truncated: rendered.truncated },
+        json: { layer, windowId: windowId ?? null, truncated: rendered.truncated },
       };
     },
   });
@@ -402,7 +375,6 @@ export function registerCoreTools(ctx: ServerContext): void {
         .array(z.string())
         .optional()
         .describe('Additional tokens, e.g. ["path=Notes/Today.md", "format=json"]'),
-      vault: z.string().optional().describe("Target vault name; overrides the session default"),
     },
     // Dispatches any command in Obsidian's table, including delete and plugin
     // management, so it is at least as powerful as the tools that wrap them.
@@ -410,12 +382,7 @@ export function registerCoreTools(ctx: ServerContext): void {
     handler: async (args) => {
       const command = args.command as string;
       const extra = (args.args as string[] | undefined) ?? [];
-      const vault = args.vault as string | undefined;
-
-      const stdout = await router.cliCommand(
-        [command, ...extra],
-        vault !== undefined ? { vault } : {},
-      );
+      const stdout = await router.cliCommand([command, ...extra]);
       const rendered = renderResult(stdout);
       return {
         text: rendered.text === "" ? "(command produced no output)" : rendered.text,

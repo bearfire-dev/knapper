@@ -9,6 +9,19 @@ import { runDevCycle } from "../devcycle/dev-cycle.js";
 import { runExerciseCommand } from "../devcycle/exercise-command.js";
 import { runResetPluginState } from "../devcycle/reset-state.js";
 import { runPluginHealth } from "../devcycle/plugin-health.js";
+import { readDescriptor } from "../session/descriptor.js";
+import { UobError } from "../util/errors.js";
+
+async function activePluginId(ctx: ServerContext): Promise<string> {
+  const key = ctx.currentSessionKey;
+  const descriptor = key === undefined ? undefined : await readDescriptor(key);
+  const pluginId = descriptor?.plugin?.id;
+  if (pluginId !== undefined) return pluginId;
+  throw new UobError("INVALID_ARGUMENT", "No development plugin is bound to this target.", {
+    remediation: "Open the development vault again and pass pluginDir.",
+    fixedBy: "obsidian_open",
+  });
+}
 
 export function registerPluginDevTools(ctx: ServerContext): void {
   const { registry, router, config, telemetry, capture } = ctx;
@@ -21,45 +34,21 @@ export function registerPluginDevTools(ctx: ServerContext): void {
     description:
       "Answer “did my plugin change work?” in one call: insert a telemetry mark, reload the plugin " +
       "via CLI, verify that it exists, is enabled, and is loaded, then return " +
-      "console errors since the mark (attributed to the plugin when possible). Prefer this after " +
-      "editing plugin source over manual reload + log spelunking. Side effects: reloads the plugin; " +
-      "may open a note; an optional full screenshot requires CDP; reload throws away in-memory plugin state.",
-    inputSchema: {
-      pluginId: z.string().min(1).describe("Plugin id folder name under .obsidian/plugins/"),
-      openPath: z
-        .string()
-        .optional()
-        .describe("Vault-relative note path to open after reload (e.g. Notes/Alpha.md)"),
-      waitMs: z
-        .number()
-        .int()
-        .nonnegative()
-        .optional()
-        .describe("Milliseconds to wait after reload before health and log checks (default 1500)"),
-      screenshot: z
-        .enum(["none", "full"])
-        .optional()
-        .describe("Screenshot mode (default none); full captures the Obsidian window contents"),
-      vault: z
-        .string()
-        .optional()
-        .describe(`Target vault name; default from session. ${CLOSED_VAULT_WARNING}`),
-    },
-    handler: async (args) =>
-      runDevCycle(
+      "console errors since the mark. It always uses the plugin linked by obsidian_open.",
+    inputSchema: {},
+    handler: async (args) => {
+      const pluginId = await activePluginId(ctx);
+      return runDevCycle(
         router,
         config,
         telemetry,
         capture,
         {
-          pluginId: args.pluginId as string,
-          openPath: args.openPath as string | undefined,
-          waitMs: args.waitMs as number | undefined,
-          vault: vaultName(args, config),
-          screenshot: args.screenshot as "none" | "full" | undefined,
+          pluginId,
         },
         args,
-      ),
+      );
+    },
   });
 
   registry.add({

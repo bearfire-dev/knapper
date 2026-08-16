@@ -54,7 +54,7 @@ describe("session launch failures", () => {
 
     expect(error).toMatchObject({
       code: "SESSION_NOT_RUNNING",
-      fixedBy: "obsidian_session_open",
+      fixedBy: "obsidian_open",
       details: expect.objectContaining({
         launchError: expect.objectContaining({ signal: "SIGSEGV" }),
       }),
@@ -86,7 +86,7 @@ describe("session launch failures", () => {
 
     await expect(restartSession(key, { env })).rejects.toMatchObject({
       code: "SESSION_NOT_RUNNING",
-      fixedBy: "obsidian_session_reset",
+      fixedBy: "obsidian_open",
       details: expect.objectContaining({
         launchError: expect.objectContaining({ signal: "SIGSEGV" }),
       }),

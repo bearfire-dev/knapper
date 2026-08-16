@@ -39,6 +39,8 @@ export interface TelemetryRecord {
   stack?: string;
   /** Plugin id inferred from stack frames, when attributable. */
   plugin?: string;
+  /** Stable CDP target id for the main window or popout that emitted the record. */
+  windowId?: string;
   /** Marker label, for `source: "marker"` records. */
   label?: string;
   url?: string;
@@ -53,6 +55,7 @@ export interface QueryOptions {
   /** Minimum severity, e.g. "warn" returns warn and error. */
   minLevel?: LogLevel;
   plugin?: string;
+  windowId?: string;
   /** Case-insensitive regular expression applied to text and stack. */
   pattern?: string;
   source?: RecordSource;
@@ -204,6 +207,7 @@ export class TelemetryStore {
       if (opts.level !== undefined && r.level !== opts.level) return false;
       if (minSeverity !== undefined && SEVERITY[r.level] < minSeverity) return false;
       if (opts.plugin !== undefined && r.plugin !== opts.plugin) return false;
+      if (opts.windowId !== undefined && r.windowId !== opts.windowId) return false;
       if (opts.source !== undefined && r.source !== opts.source) return false;
       if (cutoff !== undefined && r.timestamp < cutoff) return false;
       if (regex !== undefined && !regex.test(r.text) && !regex.test(r.stack ?? "")) return false;
@@ -520,6 +524,7 @@ function isTelemetryRecord(value: unknown): value is TelemetryRecord {
     typeof value.text === "string" &&
     optionalString(value.stack) &&
     optionalString(value.plugin) &&
+    optionalString(value.windowId) &&
     optionalString(value.label) &&
     optionalString(value.url) &&
     (value.meta === undefined || isObject(value.meta))
@@ -545,8 +550,9 @@ export function formatRecords(records: TelemetryRecord[]): string {
     .map((r) => {
       const time = new Date(r.timestamp).toISOString().slice(11, 23);
       const plugin = r.plugin ? ` {${r.plugin}}` : "";
+      const window = r.windowId ? ` [${r.windowId}]` : "";
       const level = r.level.toUpperCase().padEnd(5);
-      const head = `${time} ${level}${plugin} ${r.text}`;
+      const head = `${time} ${level}${window}${plugin} ${r.text}`;
       return r.stack ? `${head}\n${indent(r.stack)}` : head;
     })
     .join("\n");

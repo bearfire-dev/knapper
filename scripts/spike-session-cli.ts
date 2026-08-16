@@ -43,7 +43,7 @@
  * This launches two real Obsidian windows on your desktop and closes them again.
  * It does not touch your own profile, vaults, or socket.
  *
- *   node scripts/spike-session-cli.mjs
+ *   npx tsx scripts/spike-session-cli.ts
  */
 
 import { execFile, spawn } from "node:child_process";
@@ -55,6 +55,56 @@ import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
 
+interface DevToolsInfo {
+  port: number;
+  browserId: string;
+}
+
+interface Session {
+  id: string;
+  root: string;
+  userData: string;
+  vault: string;
+  vaultName: string;
+  runtimeDir: string;
+  pid?: number;
+  cdp?: DevToolsInfo;
+}
+
+interface PathInfo {
+  exists: boolean;
+  isSocket?: boolean;
+  ino?: number;
+  mtimeMs?: number;
+}
+
+interface CliResult {
+  ok: boolean;
+  stdout: string;
+  stderr?: string;
+  error?: string;
+}
+
+interface CdpVersion {
+  webSocketDebuggerUrl?: unknown;
+}
+
+declare global {
+  interface Window {
+    handleCli?: (args: string[]) => unknown;
+  }
+}
+
+function errorDetails(error: unknown): { message?: string; stdout?: string } {
+  if (error instanceof Error) return { message: error.message };
+  if (typeof error !== "object" || error === null) return { message: String(error) };
+  const details = error as { message?: unknown; stdout?: unknown };
+  return {
+    message: typeof details.message === "string" ? details.message : String(error),
+    stdout: typeof details.stdout === "string" ? details.stdout : undefined,
+  };
+}
+
 const BIN = process.env.OBSIDIAN_BIN ?? "obsidian";
 const ROOT = process.env.SPIKE_ROOT ?? "/tmp/knap-spike";
 const RUNTIME_BASE = join(process.env.XDG_RUNTIME_DIR ?? "/tmp", "knap-spike");
@@ -65,7 +115,7 @@ const REAL_SOCKET = process.env.XDG_RUNTIME_DIR
   ? join(process.env.XDG_RUNTIME_DIR, ".obsidian-cli.sock")
   : join(homedir(), ".obsidian-cli.sock");
 
-const results = {};
+const results: Record<string, unknown> = {};
 let failures = 0;
 
 /**
@@ -77,9 +127,9 @@ let failures = 0;
  * WAYLAND_DISPLAY absolute against the *real* runtime dir first; libwayland then
  * uses it verbatim and never consults XDG_RUNTIME_DIR.
  */
-function sessionEnv(runtimeDir) {
+function sessionEnv(runtimeDir: string): NodeJS.ProcessEnv {
   const { ELECTRON_RUN_AS_NODE: _stripped, ...rest } = process.env;
-  const env = { ...rest, XDG_RUNTIME_DIR: runtimeDir };
+  const env: NodeJS.ProcessEnv = { ...rest, XDG_RUNTIME_DIR: runtimeDir };
   const wayland = process.env.WAYLAND_DISPLAY;
   if (wayland !== undefined && wayland !== "" && !wayland.startsWith("/")) {
     env.WAYLAND_DISPLAY = join(process.env.XDG_RUNTIME_DIR ?? "/run/user/1000", wayland);
@@ -87,15 +137,15 @@ function sessionEnv(runtimeDir) {
   return env;
 }
 
-function gate(name, ok, detail) {
+function gate(name: string, ok: boolean, detail: Record<string, unknown>): void {
   results[name] = { ok, ...detail };
   if (!ok) failures++;
   console.log(`${ok ? "PASS" : "FAIL"}  ${name}${detail ? `  ${JSON.stringify(detail)}` : ""}`);
 }
 
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
-async function pathInfo(p) {
+async function pathInfo(p: string): Promise<PathInfo> {
   try {
     const st = await stat(p);
     return { exists: true, isSocket: st.isSocket(), ino: st.ino, mtimeMs: st.mtimeMs };
@@ -104,7 +154,8 @@ async function pathInfo(p) {
   }
 }
 
-function alive(pid) {
+function alive(pid: number | undefined): boolean {
+  if (pid === undefined) return false;
   try {
     process.kill(pid, 0);
     return true;
@@ -123,7 +174,7 @@ function alive(pid) {
  * directory that is not there yet silently deletes it and the app opens the vault
  * picker instead.
  */
-async function seed(id, vaultName) {
+async function seed(id: string, vaultName: string): Promise<Session> {
   const root = join(ROOT, id);
   const userData = join(root, "userdata");
   const vault = join(root, vaultName);
@@ -156,7 +207,7 @@ async function seed(id, vaultName) {
 }
 
 /** Read `DevToolsActivePort`: line 1 is the port, line 2 the browser uuid path. */
-async function readDevTools(userDataDir) {
+async function readDevTools(userDataDir: string): Promise<DevToolsInfo | undefined> {
   try {
     const text = await readFile(join(userDataDir, "DevToolsActivePort"), "utf8");
     const [portLine, idLine] = text.split("\n");
@@ -169,18 +220,20 @@ async function readDevTools(userDataDir) {
   }
 }
 
-async function probeCdp(port) {
+async function probeCdp(port: number): Promise<CdpVersion | undefined> {
   try {
     const res = await fetch(`http://127.0.0.1:${port}/json/version`, {
       signal: AbortSignal.timeout(2000),
     });
-    return res.ok ? await res.json() : undefined;
+    if (!res.ok) return undefined;
+    const body: unknown = await res.json();
+    return typeof body === "object" && body !== null ? (body as CdpVersion) : undefined;
   } catch {
     return undefined;
   }
 }
 
-async function launch(session) {
+async function launch(session: Session): Promise<Session> {
   const args = [
     `--user-data-dir=${session.userData}`,
     "--remote-debugging-port=0",
@@ -217,7 +270,12 @@ async function launch(session) {
  * `--`-prefixed token before `handleCli` sees it, so the flag never reaches the
  * command.
  */
-async function cli(session, runtimeDir, args, timeout = 20_000) {
+async function cli(
+  session: Session,
+  runtimeDir: string,
+  args: string[],
+  timeout = 20_000,
+): Promise<CliResult> {
   try {
     const { stdout } = await execFileAsync(BIN, [`--user-data-dir=${session.userData}`, ...args], {
       timeout,
@@ -225,12 +283,13 @@ async function cli(session, runtimeDir, args, timeout = 20_000) {
       maxBuffer: 8 * 1024 * 1024,
     });
     return { ok: true, stdout: stdout.trim() };
-  } catch (e) {
-    return { ok: false, stdout: (e.stdout ?? "").trim(), error: e.message };
+  } catch (error: unknown) {
+    const details = errorDetails(error);
+    return { ok: false, stdout: details.stdout?.trim() ?? "", error: details.message };
   }
 }
 
-async function quit(session, timeoutMs = 20_000) {
+async function quit(session: Session, timeoutMs = 20_000): Promise<void> {
   if (!session.pid) return;
   try {
     process.kill(session.pid, "SIGTERM");
@@ -261,15 +320,16 @@ await rm(RUNTIME_BASE, { recursive: true, force: true });
 const a = await seed("a", "spike-a");
 const b = await seed("b", "spike-b");
 
-let launched = [];
+let launched: Session[] = [];
 try {
   // Sequential, not parallel: the socket steal we are testing for is a race on
   // boot order, and launching together would make gate 2 flaky rather than wrong.
   await launch(a);
   launched.push(a);
-  console.log(`launched a: pid=${a.pid} port=${a.cdp.port}`);
   await launch(b);
   launched.push(b);
+  if (!a.cdp || !b.cdp) throw new Error("CDP details missing after launch");
+  console.log(`launched a: pid=${a.pid} port=${a.cdp.port}`);
   console.log(`launched b: pid=${b.pid} port=${b.cdp.port}\n`);
 
   await sleep(10_000);
@@ -313,7 +373,9 @@ try {
       a.cdp.browserId !== b.cdp.browserId &&
       aVer !== undefined &&
       bVer !== undefined &&
-      (aVer.webSocketDebuggerUrl ?? "").includes(a.cdp.browserId.replace(/^\/?devtools\//, "")),
+      (typeof aVer?.webSocketDebuggerUrl === "string" ? aVer.webSocketDebuggerUrl : "").includes(
+        a.cdp.browserId.replace(/^\/?devtools\//, ""),
+      ),
     {
       aPort: a.cdp.port,
       bPort: b.cdp.port,
@@ -337,9 +399,10 @@ try {
       ?.pages()
       .find((p) => p.url().startsWith("app://obsidian.md/"));
     const typeofHandleCli = page ? await page.evaluate(() => typeof window.handleCli) : "no-page";
-    const viaCdp = page
-      ? await page.evaluate(() => Promise.resolve(window.handleCli(["files", "format=json"])))
-      : undefined;
+    const viaCdp =
+      page && typeof (await page.evaluate(() => typeof window.handleCli)) === "function"
+        ? await page.evaluate(() => Promise.resolve(window.handleCli?.(["files", "format=json"])))
+        : undefined;
     await browser.close();
     gate("S2-handleCli-over-cdp", typeofHandleCli === "function", {
       typeofHandleCli,

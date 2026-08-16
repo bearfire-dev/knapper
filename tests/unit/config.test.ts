@@ -1,45 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { loadConfig, DEFAULT_CDP_URL } from "../../src/config.js";
-import { parseToolsets, DEFAULT_TOOLSETS, TOOLSETS } from "../../src/toolsets.js";
 import {
   CAPABILITY_PREFERENCE,
   CAPABILITIES,
   EXCLUSIVE_DEBUGGER_LAYERS,
 } from "../../src/capabilities.js";
-
-describe("parseToolsets", () => {
-  it("defaults to an empty operational toolset", () => {
-    expect([...parseToolsets(undefined).enabled].sort()).toEqual([...DEFAULT_TOOLSETS].sort());
-    expect([...parseToolsets("").enabled].sort()).toEqual([...DEFAULT_TOOLSETS].sort());
-  });
-
-  it("enables everything for `all`", () => {
-    expect(parseToolsets("all").enabled.size).toBe(TOOLSETS.length);
-  });
-
-  it("reports unknown names when all is present", () => {
-    const result = parseToolsets("all,typo");
-    expect(result.enabled.size).toBe(TOOLSETS.length);
-    expect(result.unknown).toEqual(["typo"]);
-  });
-
-  it("parses a comma-separated list, tolerating whitespace and case", () => {
-    const { enabled } = parseToolsets(" Core , VAULT ");
-    expect([...enabled].sort()).toEqual(["core", "vault"]);
-  });
-
-  it("collects unknown names instead of throwing, so a typo cannot break startup", () => {
-    const { enabled, unknown } = parseToolsets("core,nonsense");
-    expect([...enabled]).toEqual(["core"]);
-    expect(unknown).toEqual(["nonsense"]);
-  });
-
-  it("keeps the operational surface empty when every name is invalid", () => {
-    const { enabled, unknown } = parseToolsets("bogus,alsobogus");
-    expect([...enabled].sort()).toEqual([...DEFAULT_TOOLSETS].sort());
-    expect(unknown).toEqual(["bogus", "alsobogus"]);
-  });
-});
 
 describe("loadConfig", () => {
   it("parses the command transport preference", () => {
@@ -74,7 +39,6 @@ describe("loadConfig", () => {
       {
         OBSIDIAN_CDP_URL: "http://127.0.0.1:9333",
         OBSIDIAN_VAULT: "my-vault",
-        KNAP_TOOLSETS: "core",
         KNAP_LOG_LEVEL: "debug",
         KNAP_TELEMETRY_BUFFER: "50",
       },
@@ -83,7 +47,8 @@ describe("loadConfig", () => {
     expect(config.vault).toBe("my-vault");
     expect(config.logLevel).toBe("debug");
     expect(config.telemetryBuffer).toBe(50);
-    expect([...config.enabledToolsets]).toEqual(["core"]);
+    expect(config.unknownToolsets).toEqual([]);
+    expect(config.enabledToolsets.size).toBeGreaterThan(1);
   });
 
   it("lets explicit overrides win over the environment", () => {
@@ -181,7 +146,7 @@ describe("capability model", () => {
   });
 
   it("treats the two CDP transports as non-exclusive, per the Gate B measurement", () => {
-    // scripts/spike-gates.mjs verified dev:cdp and connectOverCDP coexist.
+    // scripts/spike-gates.ts verified dev:cdp and connectOverCDP coexist.
     expect(EXCLUSIVE_DEBUGGER_LAYERS).toEqual([]);
   });
 });

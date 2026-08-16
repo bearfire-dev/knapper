@@ -12,30 +12,51 @@
  *      apart — and there is exactly one BrowserContext holding all of them.
  *
  * Run with Obsidian already launched on --remote-debugging-port=9222:
- *   node scripts/spike-multiwindow.mjs
+ *   npx tsx scripts/spike-multiwindow.ts
  */
 
 import { chromium } from "playwright-core";
 import { classifyTargets, selectTarget, fetchTargets } from "../dist/connection/cdp/discover.js";
 
+interface ObsidianLeaf {
+  openFile?: (file: unknown) => Promise<void>;
+  view?: { containerEl?: { ownerDocument?: { defaultView: Window | null } } };
+  detach: () => void;
+}
+
+declare global {
+  interface Window {
+    app?: unknown;
+  }
+}
+
 const CDP_URL = process.env.OBSIDIAN_CDP_URL ?? "http://127.0.0.1:9222";
 
 const browser = await chromium.connectOverCDP(CDP_URL, { noDefaults: true, isLocal: true });
 const context = browser.contexts()[0];
+if (!context) throw new Error("no browser context found");
 
 console.log(`contexts: ${browser.contexts().length} (expected exactly 1)`);
 
 const main = context.pages().find((p) => p.url().startsWith("app://obsidian.md/"));
 if (!main) throw new Error("no Obsidian main window attached");
 
-console.log(`main vault: ${await main.evaluate(() => window.app?.vault?.getName?.())}`);
+console.log(
+  `main vault: ${await main.evaluate(() => {
+    const app = window.app as { vault?: { getName?: () => string } } | undefined;
+    return app?.vault?.getName?.();
+  })}`,
+);
 
 // ---------------------------------------------------------------- popout case
 console.log("\n--- opening a popout leaf ---");
 const popoutAppeared = context.waitForEvent("page", { timeout: 15_000 }).catch(() => undefined);
 
 await main.evaluate(async () => {
-  const app = window.app;
+  const app = window.app as {
+    vault: { getMarkdownFiles: () => unknown[] };
+    workspace: { openPopoutLeaf: () => { openFile: (file: unknown) => Promise<void> } };
+  };
   const file = app.vault.getMarkdownFiles()[0];
   // Obsidian's own API for tearing a leaf out into its own OS window.
   const leaf = app.workspace.openPopoutLeaf();
@@ -62,7 +83,7 @@ console.log(`\nmain windows detected: ${mains.length}`);
 console.log(`popouts detected:      ${popouts.length}`);
 console.log(
   popouts.length > 0
-    ? `PASS: popout classified despite url="${popouts[0].target.url}"`
+    ? `PASS: popout classified despite url="${popouts[0]!.target.url}"`
     : "WARN: no popout classified — the popout may not have opened",
 );
 
@@ -85,7 +106,12 @@ console.log(
 console.log("\n--- vault identity per window ---");
 for (const page of context.pages()) {
   if (page.isClosed()) continue;
-  const name = await page.evaluate(() => window.app?.vault?.getName?.()).catch(() => undefined);
+  const name = await page
+    .evaluate(() => {
+      const app = window.app as { vault?: { getName?: () => string } } | undefined;
+      return app?.vault?.getName?.();
+    })
+    .catch(() => undefined);
   console.log(`  url=${page.url().slice(0, 40).padEnd(40)} vault=${name ?? "(no app)"}`);
 }
 
@@ -97,8 +123,11 @@ console.log(
 // ------------------------------------------------------------------- clean up
 if (popoutPage && !popoutPage.isClosed()) {
   await main.evaluate(() => {
+    const app = window.app as {
+      workspace: { iterateAllLeaves: (callback: (leaf: ObsidianLeaf) => void) => void };
+    };
     // Close popout leaves without touching the user's main window.
-    window.app.workspace.iterateAllLeaves((leaf) => {
+    app.workspace.iterateAllLeaves((leaf) => {
       const win = leaf.view?.containerEl?.ownerDocument?.defaultView;
       if (win && win !== window) leaf.detach();
     });

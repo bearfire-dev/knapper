@@ -32,9 +32,8 @@ describe("classifyCliOutput", () => {
   it("maps the CLI-disabled marker and names the tool that fixes it", () => {
     const err = classifyCliOutput("Command line interface is not enabled.\n");
     expect(err?.code).toBe("CLI_DISABLED");
-    expect(err?.fixedBy).toBe("obsidian_setup_cli");
-    // It cannot be fixed via the CLI itself, which the remediation must say.
-    expect(err?.remediation).toMatch(/cannot be fixed through the CLI/i);
+    expect(err?.fixedBy).toBe("obsidian_open");
+    expect(err?.remediation).toMatch(/private development target/i);
   });
 
   it("maps the vault-not-found marker and echoes the requested name", () => {

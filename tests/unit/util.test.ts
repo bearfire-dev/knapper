@@ -239,8 +239,8 @@ describe("error contract", () => {
   it("carries remediation text and names the fixing tool", () => {
     const err = cliDisabled();
     expect(err.remediation).toBeTruthy();
-    expect(err.fixedBy).toBe("obsidian_setup_cli");
-    expect(err.toText()).toContain("obsidian_setup_cli");
+    expect(err.fixedBy).toBe("obsidian_open");
+    expect(err.toText()).toContain("obsidian_open");
   });
 
   it("explains that a running instance must be quit before the debug flag applies", () => {
@@ -262,7 +262,7 @@ describe("error contract", () => {
   it("serializes to JSON with the code and remediation", () => {
     expect(cliDisabled().toJSON()).toMatchObject({
       code: "CLI_DISABLED",
-      fixedBy: "obsidian_setup_cli",
+      fixedBy: "obsidian_open",
     });
   });
 

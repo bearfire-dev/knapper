@@ -1,7 +1,7 @@
 {
   "$schema": "https://code.claude.com/schemas/marketplace.json",
   "name": "knapper",
-  "description": "MCP server for stateless Obsidian plugin development with one managed session, browser automation, and debugging.",
+  "description": "MCP server for Obsidian plugin development with one private vault, popout-aware UI automation, and logs.",
   "owner": {
     "name": "bearfire-dev",
     "url": "https://github.com/bearfire-dev"
@@ -10,7 +10,7 @@
     {
       "name": "knapper",
       "source": "./",
-      "description": "MCP server for stateless Obsidian plugin development with one managed session, browser automation, and debugging."
+      "description": "MCP server for Obsidian plugin development with one private vault, popout-aware UI automation, and logs."
     }
   ]
 }

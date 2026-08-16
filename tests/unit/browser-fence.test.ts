@@ -64,6 +64,7 @@ describe("safeWindowSummary", () => {
   it("removes all renderer metadata for an unauthorized window", () => {
     expect(safeWindowSummary(window, false)).toEqual({
       targetId: "target-7",
+      windowId: "target-7",
       kind: "main",
       authorized: false,
     });
@@ -72,6 +73,7 @@ describe("safeWindowSummary", () => {
   it("keeps renderer metadata for an authorized window", () => {
     expect(safeWindowSummary(window, true)).toEqual({
       ...window,
+      windowId: "target-7",
       authorized: true,
     });
   });
@@ -105,7 +107,7 @@ describe("PlaywrightSession window privacy", () => {
     const { session, isVaultAuthorized } = sessionFixture(false);
 
     expect(await session.windowSummaries()).toEqual([
-      { targetId: "target-7", kind: "main", authorized: false },
+      { targetId: "target-7", windowId: "target-7", kind: "main", authorized: false },
     ]);
     expect(isVaultAuthorized).toHaveBeenCalledWith("Private vault");
   });

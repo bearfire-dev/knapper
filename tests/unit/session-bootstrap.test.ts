@@ -67,7 +67,7 @@ describe("seedSessionProfile", () => {
     ).resolves.toContain(SESSION_IDENTITY_PLUGIN_ID);
   });
 
-  it("ignores legacy caller paths and leaves them unchanged", async () => {
+  it("adopts the selected development vault", async () => {
     const dir = join(home, "empty");
     await mkdir(dir, { recursive: true });
     const seeded = await seedSessionProfile({
@@ -76,12 +76,12 @@ describe("seedSessionProfile", () => {
       env,
       ...({ vaultPath: dir } as Record<string, unknown>),
     });
-    expect(seeded.vault.grant).toBe("created");
-    expect(seeded.vault.path).toBe(sessionPaths(KEY, env).vaultDir);
+    expect(seeded.vault.grant).toBe("adopted");
+    expect(seeded.vault.path).toBe(dir);
     expect((await stat(dir)).isDirectory()).toBe(true);
   });
 
-  it("never reads, marks, or adopts a caller-owned vault", async () => {
+  it("preserves existing notes while it prepares the selected vault", async () => {
     const dir = await userVault(join(home, "MyRealNotes"));
     const seeded = await seedSessionProfile({
       key: KEY,
@@ -89,7 +89,8 @@ describe("seedSessionProfile", () => {
       env,
       ...({ vaultPath: dir, adopt: true } as Record<string, unknown>),
     });
-    expect(seeded.vault.path).not.toBe(dir);
+    expect(seeded.vault.path).toBe(dir);
+    expect(seeded.vault.grant).toBe("adopted");
     expect(await marked(dir)).toBe(false);
     expect(await readFile(join(dir, "Important.md"), "utf8")).toContain("life's work");
   });

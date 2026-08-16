@@ -20,7 +20,7 @@
 
 import { mkdir, writeFile } from "node:fs/promises";
 import { randomBytes } from "node:crypto";
-import { basename, dirname, join } from "node:path";
+import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { sessionPaths, type SessionPaths } from "../config.js";
 import { UobError } from "../util/errors.js";
 import { chromium } from "playwright-core";
@@ -28,6 +28,8 @@ import { chromium } from "playwright-core";
 export interface SeedOptions {
   key: string;
   now: Date;
+  /** Existing caller vault to adopt. It is never removed by session cleanup. */
+  vaultPath?: string;
   env?: NodeJS.ProcessEnv;
 }
 
@@ -322,8 +324,13 @@ export function seedGlobalConfig(vaultId: string, vaultPath: string, now: Date):
 export async function seedSessionProfile(opts: SeedOptions): Promise<SeededSession> {
   const env = opts.env ?? process.env;
   const paths = sessionPaths(opts.key, env);
-  const vaultPath = paths.vaultDir;
-
+  const vaultPath = opts.vaultPath === undefined ? paths.vaultDir : resolve(opts.vaultPath);
+  if (opts.vaultPath !== undefined && !isAbsolute(opts.vaultPath)) {
+    throw new UobError("INVALID_ARGUMENT", "vaultPath must be an absolute path.", {
+      remediation: "Pass the absolute path to an existing Obsidian vault.",
+      details: { vaultPath: opts.vaultPath },
+    });
+  }
   // A private workspace always owns a newly-created root. It cannot adopt a path
   // supplied by an agent, which removes the only route from session cleanup to a
   // user's vault. The non-recursive root creation also makes key collisions fail
@@ -367,7 +374,7 @@ export async function seedSessionProfile(opts: SeedOptions): Promise<SeededSessi
       id: vaultId,
       name: basename(vaultPath),
       path: vaultPath,
-      grant: "created",
+      grant: opts.vaultPath === undefined ? "created" : "adopted",
     },
   };
 }

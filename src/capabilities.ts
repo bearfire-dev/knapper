@@ -58,7 +58,7 @@ export const CAPABILITY_PREFERENCE: Record<Capability, readonly Layer[]> = {
 /**
  * Layers that contend for Electron's single per-WebContents debugger slot.
  *
- * Measured empirically (scripts/spike-gates.mjs, Gate B) against Obsidian 1.12.7 /
+ * Measured empirically (scripts/spike-gates.ts, Gate B) against Obsidian 1.12.7 /
  * Electron 39.8.10: `dev:cdp` and a live `connectOverCDP` attachment **do** coexist,
  * and Playwright keeps working afterwards. The `--remote-debugging-port` transport
  * is a separate protocol handler from `webContents.debugger`, so they do not

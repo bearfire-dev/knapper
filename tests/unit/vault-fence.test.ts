@@ -22,7 +22,12 @@ import {
 import { buildArgs } from "../../src/connection/cli/exec.js";
 import { createLogger } from "../../src/util/logger.js";
 import { sessionPaths } from "../../src/config.js";
-import { SESSION_SCHEMA_VERSION, writeDescriptor } from "../../src/session/descriptor.js";
+import {
+  readDescriptor,
+  SESSION_SCHEMA_VERSION,
+  writeDescriptor,
+} from "../../src/session/descriptor.js";
+import { sessionBootId, verifySessionOwnership } from "../../src/session/ownership.js";
 
 /**
  * The fence is the thing standing between an agent and someone's real notes, so
@@ -212,7 +217,62 @@ describe("VaultFence — private session identity", () => {
     expect((await fence.resolve(key)).grant).toBe("created");
 
     const descriptorFile = join(paths.root, "session.json");
-    const persisted = JSON.parse(await readFile(descriptorFile, "utf8"));
+    let persisted = JSON.parse(await readFile(descriptorFile, "utf8"));
+    const originalRootDevice = persisted.ownership.rootDevice;
+    const originalVaultDevice = persisted.ownership.vaultDevice;
+
+    const bootId = await sessionBootId();
+    if (bootId !== undefined) {
+      persisted.ownership.bootId = "00000000-0000-0000-0000-000000000000";
+      await writeFile(descriptorFile, JSON.stringify(persisted));
+      fence.invalidate();
+      expect((await fence.resolve(key)).grant).toBe("created");
+      expect((await readDescriptor(key, env))?.ownership?.bootId).toBe(bootId);
+    }
+
+    persisted = JSON.parse(await readFile(descriptorFile, "utf8"));
+    persisted.ownership.bootId = bootId;
+    persisted.ownership.rootDevice += 1;
+    await writeFile(descriptorFile, JSON.stringify(persisted));
+    fence.invalidate();
+    await expect(fence.resolve(key)).rejects.toMatchObject({ code: "VAULT_NOT_AUTHORIZED" });
+
+    persisted.ownership.rootDevice = originalRootDevice;
+    persisted.ownership.vaultDevice += 1;
+    await writeFile(descriptorFile, JSON.stringify(persisted));
+    fence.invalidate();
+    await expect(fence.resolve(key)).rejects.toMatchObject({ code: "VAULT_NOT_AUTHORIZED" });
+
+    persisted.ownership.vaultDevice = originalVaultDevice;
+    await writeFile(descriptorFile, JSON.stringify(persisted));
+    fence.invalidate();
+    expect((await fence.resolve(key)).grant).toBe("created");
+
+    if (bootId !== undefined) {
+      persisted.ownership.bootId = "00000000-0000-0000-0000-000000000000";
+      persisted.ownership.rootDevice += 1;
+      persisted.ownership.vaultDevice += 1;
+      await writeFile(descriptorFile, JSON.stringify(persisted));
+      fence.invalidate();
+      expect((await fence.resolve(key)).grant).toBe("created");
+      expect((await readDescriptor(key, env))?.ownership).toMatchObject({
+        rootDevice: originalRootDevice,
+        vaultDevice: originalVaultDevice,
+        bootId,
+      });
+    }
+
+    persisted = JSON.parse(await readFile(descriptorFile, "utf8"));
+
+    persisted.ownership.bootId = "00000000-0000-0000-0000-000000000000";
+    await writeFile(descriptorFile, JSON.stringify(persisted));
+    expect(
+      await verifySessionOwnership(await readDescriptor(key, env), env, {
+        id: async () => undefined,
+        startedAt: async () => undefined,
+      }),
+    ).toBe(false);
+
     delete persisted.vault.path;
     await writeFile(descriptorFile, JSON.stringify(persisted));
     fence.invalidate();

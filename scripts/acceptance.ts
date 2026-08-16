@@ -7,26 +7,64 @@
  *
  * The suite launches a private Obsidian profile with a temporary CDP port.
  *
- *   node scripts/acceptance.mjs
+ *   npm run acceptance
  */
 
 import { spawn } from "node:child_process";
-import { createDisposableWorkspace, createLiveHome, removeLiveHome } from "./lib/live-harness.mjs";
+import { createDisposableWorkspace, createLiveHome, removeLiveHome } from "./lib/live-harness.js";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { stat } from "node:fs/promises";
+import type { ChildProcessWithoutNullStreams } from "node:child_process";
+
+type JsonPrimitive = string | number | boolean | null;
+type JsonValue = JsonPrimitive | JsonObject | JsonValue[];
+type JsonObject = { [key: string]: JsonValue | undefined };
+interface McpContent {
+  type?: string;
+  text?: string;
+}
+interface McpTool {
+  name: string;
+  description?: string;
+}
+interface McpJson {
+  cursor?: number;
+  matched?: number;
+  mimeType?: string;
+  size?: number;
+  path?: string;
+  argvCorruption?: unknown;
+  windows?: Array<{ windowId?: string; kind?: string }>;
+  dialogId?: string;
+  windowId?: string;
+  type?: string;
+}
+interface McpResult {
+  serverInfo?: { name?: string; version?: string };
+  tools?: McpTool[];
+  content?: McpContent[];
+  structuredContent?: McpJson;
+  isError?: boolean;
+}
+interface JsonRpcResponse {
+  id?: number;
+  error?: { message: string };
+  result?: McpResult;
+}
+type ToolResult = { text: string; images: McpContent[]; json?: McpJson; isError: boolean };
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
-let VAULT;
+let VAULT: string | undefined;
 const PLUGIN = process.env.PLUGIN_ID;
 
 class McpClient {
-  #child;
+  #child: ChildProcessWithoutNullStreams;
   #buffer = "";
-  #pending = new Map();
+  #pending = new Map<number, (message: JsonRpcResponse) => void>();
   #nextId = 1;
 
-  constructor(args = [], env = process.env) {
+  constructor(args: string[] = [], env: NodeJS.ProcessEnv = process.env) {
     this.#child = spawn("node", [join(root, "dist", "cli.js"), ...args], {
       stdio: ["pipe", "pipe", "pipe"],
       env,
@@ -37,30 +75,30 @@ class McpClient {
     });
   }
 
-  #onData(chunk) {
+  #onData(chunk: Buffer) {
     this.#buffer += chunk.toString();
     let index;
     while ((index = this.#buffer.indexOf("\n")) !== -1) {
       const line = this.#buffer.slice(0, index).trim();
       this.#buffer = this.#buffer.slice(index + 1);
       if (line === "") continue;
-      let message;
+      let message: JsonRpcResponse;
       try {
         message = JSON.parse(line);
       } catch {
         continue;
       }
-      const resolver = this.#pending.get(message.id);
+      const resolver = message.id === undefined ? undefined : this.#pending.get(message.id);
       if (resolver) {
-        this.#pending.delete(message.id);
+        this.#pending.delete(message.id as number);
         resolver(message);
       }
     }
   }
 
-  send(method, params) {
+  send(method: string, params: JsonObject = {}): Promise<JsonRpcResponse> {
     const id = this.#nextId++;
-    const promise = new Promise((resolve, reject) => {
+    const promise = new Promise<JsonRpcResponse>((resolve, reject) => {
       this.#pending.set(id, resolve);
       setTimeout(() => {
         if (this.#pending.delete(id)) reject(new Error(`timeout waiting for ${method}`));
@@ -70,7 +108,7 @@ class McpClient {
     return promise;
   }
 
-  notify(method, params) {
+  notify(method: string, params?: JsonObject): void {
     this.#child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", method, params })}\n`);
   }
 
@@ -84,13 +122,15 @@ class McpClient {
     return res;
   }
 
-  async call(name, args = {}) {
+  async call(name: string, args: JsonObject = {}): Promise<ToolResult> {
     const res = await this.send("tools/call", { name, arguments: args });
     if (res.error) throw new Error(`${name}: ${res.error.message}`);
     const content = res.result?.content ?? [];
     const text = content
       .filter((c) => c.type === "text")
-      .map((c) => c.text)
+      .map((c) =>
+        typeof c === "object" && c !== null && !Array.isArray(c) ? String(c.text ?? "") : "",
+      )
       .join("\n");
     const images = content.filter((c) => c.type === "image");
     return {
@@ -108,35 +148,44 @@ class McpClient {
 
 let passed = 0;
 let failed = 0;
-const failures = [];
+const failures: string[] = [];
 
-async function check(label, fn) {
+async function check(
+  label: string,
+  fn: () => Promise<string | undefined> | string | undefined,
+): Promise<void> {
   process.stdout.write(`  ${label} ... `);
   try {
     const detail = await fn();
     passed++;
     console.log(`PASS${detail ? ` (${detail})` : ""}`);
-  } catch (e) {
+  } catch (e: unknown) {
+    const message = e instanceof Error ? e.message : String(e);
     failed++;
-    failures.push(`${label}: ${e.message}`);
-    console.log(`FAIL — ${e.message}`);
+    failures.push(`${label}: ${message}`);
+    console.log(`FAIL — ${message}`);
   }
 }
 
-function assert(condition, message) {
+function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message);
 }
 
 const liveHome = await createLiveHome("knapper-acceptance-");
-const client = new McpClient(["--toolsets", "all"], liveHome.env);
+const client = new McpClient([], liveHome.env);
 
 try {
   console.log("\n=== Unified Obsidian MCP — acceptance run ===\n");
   const init = await client.initialize();
-  console.log(`server: ${init.result.serverInfo.name} v${init.result.serverInfo.version}\n`);
+  console.log(
+    `server: ${init.result?.serverInfo?.name ?? "unknown"} v${init.result?.serverInfo?.version ?? "unknown"}\n`,
+  );
   const isolated = await createDisposableWorkspace(client, root, {
     home: liveHome.home,
     label: "acceptance-scratch",
+    ...(process.env.PLUGIN_SOURCE_DIR !== undefined
+      ? { pluginSourceDir: process.env.PLUGIN_SOURCE_DIR }
+      : {}),
   });
   VAULT = isolated.session.vault?.name;
   assert(typeof VAULT === "string", "isolated workspace has no vault identity");
@@ -144,18 +193,29 @@ try {
     ["Notes/Alpha.md", "# Alpha\n\nxylophone-marmalade\n"],
     ["Notes/Beta.md", "# Beta\n\n- [ ] An open task\n"],
   ]) {
-    const created = await client.call("obsidian_create", { path, content });
+    const created = await client.call("obsidian_eval", {
+      code: `(async () => {
+        const path = ${JSON.stringify(path)};
+        const content = ${JSON.stringify(content)};
+        const parent = path.split("/").slice(0, -1).join("/");
+        if (parent && !app.vault.getAbstractFileByPath(parent)) await app.vault.createFolder(parent);
+        const existing = app.vault.getAbstractFileByPath(path);
+        if (existing) await app.vault.modify(existing, content);
+        else await app.vault.create(path, content);
+        return path;
+      })()`,
+    });
     assert(!created.isError, `fixture creation failed for ${path}: ${created.text}`);
   }
 
   // ------------------------------------------------------------------ surface
   console.log("Tool surface");
   const listed = await client.send("tools/list");
-  const tools = listed.result.tools;
+  const tools = listed.result?.tools ?? [];
   const names = new Set(tools.map((t) => t.name));
 
-  await check("all toolsets register a large surface", () => {
-    assert(tools.length > 80, `only ${tools.length} tools`);
+  await check("the public surface contains exactly 20 tools", () => {
+    assert(tools.length === 20, `found ${tools.length} tools`);
     return `${tools.length} tools`;
   });
 
@@ -181,30 +241,22 @@ try {
 
   // -------------------------------------------------------------- preconditions
   console.log("\nPreconditions");
-  await check("obsidian_doctor reports a healthy instance", async () => {
-    const { text, json, isError } = await client.call("obsidian_doctor");
-    assert(!isError, "doctor returned an error");
-    assert(json && "argvCorruption" in json, "doctor did not report an argvCorruption verdict");
-    assert(json.argvCorruption === null, "argv corruption detected in user-flags.conf");
-    return text.split("\n")[0]?.slice(0, 60);
-  });
-
   await check("obsidian_status shows both transports live", async () => {
     const { text } = await client.call("obsidian_status");
     assert(/CLI transport: enabled/.test(text), "CLI transport not enabled");
     assert(/CDP transport: attached/.test(text), "CDP transport not attached");
   });
 
-  await check("obsidian_list_targets finds the main window", async () => {
-    const { text } = await client.call("obsidian_list_targets");
-    assert(/\[main\]/.test(text), "no main window classified");
+  await check("obsidian_status reports the main window", async () => {
+    const { text } = await client.call("obsidian_status");
+    assert(/main/i.test(text), "no main window classified");
   });
 
   // ------------------------------------------------------------------- CLI path
   console.log("\nObsidian CLI transport");
   await check("obsidian_eval reaches the app object", async () => {
     const { text } = await client.call("obsidian_eval", { code: "app.vault.getName()" });
-    assert(text.includes(VAULT), `got: ${text.slice(0, 80)}`);
+    assert(text.includes(VAULT ?? ""), `got: ${text.slice(0, 80)}`);
     return text.trim().slice(0, 40);
   });
 
@@ -213,24 +265,30 @@ try {
     assert(text.length > 100, "suspiciously small command list");
   });
 
-  await check("obsidian_search does real content search, not path matching", async () => {
-    const { text } = await client.call("obsidian_search", { query: "xylophone-marmalade" });
+  await check("obsidian_cli performs real content search", async () => {
+    const { text } = await client.call("obsidian_cli", {
+      command: "search",
+      args: ["query=xylophone-marmalade"],
+    });
     assert(/Alpha/.test(text), `expected Notes/Alpha.md, got: ${text.slice(0, 120)}`);
     // The phrase appears only in the body, never in a filename, so a path-substring
     // implementation would find nothing here.
   });
 
-  await check("obsidian_read returns note content", async () => {
-    const { text } = await client.call("obsidian_read", { path: "Notes/Beta.md" });
+  await check("obsidian_cli returns note content", async () => {
+    const { text } = await client.call("obsidian_cli", {
+      command: "read",
+      args: ["path=Notes/Beta.md"],
+    });
     assert(/An open task/.test(text), `unexpected content: ${text.slice(0, 120)}`);
   });
 
   // ---------------------------------------------------------------- browser path
   console.log("\nBrowser automation over CDP");
-  await check("browser_snapshot returns real Obsidian UI", async () => {
-    const { text } = await client.call("browser_snapshot");
+  await check("obsidian_snapshot returns real Obsidian UI", async () => {
+    const { text } = await client.call("obsidian_snapshot", { scope: "workspace" });
     assert(text.length > 200, "snapshot too small");
-    assert(/ref=e\d+/.test(text), "no refs in snapshot");
+    assert(/ref=[^:\s]+:e\d+/.test(text), "no window-scoped refs in snapshot");
     return `${text.length} chars`;
   });
 
@@ -245,9 +303,74 @@ try {
     assert(images.length === 0, "screenshot must not return inline image content");
     assert(json?.mimeType === "image/png", "screenshot did not return PNG metadata");
     assert(Number(json?.size) > 1000, "screenshot artifact is suspiciously small");
+    assert(json?.path !== undefined, "screenshot did not return a path");
     await stat(json.path);
     return `${json.mimeType}, ${json.size} bytes`;
   });
+
+  // ---------------------------------------------------------- popouts + dialogs
+  console.log("\nPopout windows and dialogs");
+  let popoutWindowId: string | undefined;
+  await check("obsidian_status distinguishes a popout window", async () => {
+    const opened = await client.call("obsidian_eval", {
+      code: `(() => {
+        const leaf = app.workspace.openPopoutLeaf();
+        return leaf != null;
+      })()`,
+    });
+    assert(!opened.isError, `could not open popout: ${opened.text}`);
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 800));
+    const status = await client.call("obsidian_status");
+    popoutWindowId = status.json?.windows?.find((window) => window.kind === "popout")?.windowId;
+    assert(typeof popoutWindowId === "string", `no popout in status: ${status.text}`);
+    return popoutWindowId;
+  });
+
+  await check("obsidian_eval runs in the selected popout", async () => {
+    assert(popoutWindowId !== undefined, "popout was not created");
+    const result = await client.call("obsidian_eval", {
+      windowId: popoutWindowId,
+      code: "document.body.dataset.knapperPopoutProbe = 'ready', document.body.dataset.knapperPopoutProbe",
+    });
+    assert(!result.isError && /ready/.test(result.text), result.text);
+  });
+
+  for (const dialog of ["prompt"] as const) {
+    await check(`browser_handle_dialog supports ${dialog}`, async () => {
+      const setup = await client.call("obsidian_eval", {
+        code: `(() => {
+          let button = document.querySelector("#knapper-dialog-probe");
+          if (!button) {
+            button = document.createElement("button");
+            button.id = "knapper-dialog-probe";
+            button.textContent = "Open test dialog";
+            button.style.cssText = "position:fixed;top:80px;left:80px;z-index:2147483647";
+            document.body.append(button);
+          }
+          button.onclick = () => {
+            globalThis.__knapperDialogResult = prompt("knapper prompt", "default");
+          };
+          return true;
+        })()`,
+      });
+      assert(!setup.isError, setup.text);
+      const queued = await client.call("browser_handle_dialog", {
+        accept: true,
+        promptText: "typed response",
+      });
+      assert(!queued.isError, queued.text);
+      const clicked = await client.call("browser_click", {
+        target: "#knapper-dialog-probe",
+        element: "test dialog button",
+      });
+      assert(!clicked.isError, `click failed before ${dialog}: ${clicked.text}`);
+      const expected = "typed response";
+      const result = await client.call("obsidian_eval", {
+        code: "globalThis.__knapperDialogResult",
+      });
+      assert(result.text.includes(expected), `unexpected ${dialog} result: ${result.text}`);
+    });
+  }
 
   // ------------------------------------------------------------------ telemetry
   console.log("\nTelemetry");
@@ -255,13 +378,8 @@ try {
   await check("obsidian_logs returns a cursor", async () => {
     const { json } = await client.call("obsidian_logs", { limit: 5 });
     assert(Number.isFinite(json?.cursor), "no cursor in response");
-    cursorAfterMark = Number(json.cursor);
+    cursorAfterMark = Number(json?.cursor);
     return `cursor=${cursorAfterMark}`;
-  });
-
-  await check("obsidian_log_mark inserts a marker", async () => {
-    const { isError } = await client.call("obsidian_log_mark", { label: "acceptance" });
-    assert(!isError, "mark failed");
   });
 
   await check("cursor tailing returns only new records", async () => {
@@ -277,21 +395,28 @@ try {
     return `${matched} new`;
   });
 
-  await check("obsidian_telemetry_status reports capture armed", async () => {
-    const { text } = await client.call("obsidian_telemetry_status");
-    assert(/armed/i.test(text), "no armed state reported");
+  await check("popout logs include their window id", async () => {
+    assert(popoutWindowId !== undefined, "popout was not created");
+    const before = await client.call("obsidian_logs", { limit: 1 });
+    const cursor = Number(before.json?.cursor);
+    await client.call("obsidian_eval", {
+      windowId: popoutWindowId,
+      code: 'console.log("acceptance-popout-log"), true',
+    });
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 300));
+    const after = await client.call("obsidian_logs", {
+      since: cursor,
+      windowId: popoutWindowId,
+    });
+    assert(after.text.includes("acceptance-popout-log"), after.text);
+    assert(after.text.includes(popoutWindowId), "log text omitted the popout window id");
   });
 
   // ------------------------------------------------------------------ dev cycle
   console.log("\nPlugin dev cycle");
   if (PLUGIN !== undefined && process.env.PLUGIN_SOURCE_DIR !== undefined) {
-    await check("obsidian_plugin_list sees the test plugin", async () => {
-      const { text } = await client.call("obsidian_plugin_list");
-      assert(new RegExp(PLUGIN).test(text), "test plugin not installed or enabled");
-    });
-
     await check("obsidian_dev_cycle reloads and reports", async () => {
-      const { text, isError } = await client.call("obsidian_dev_cycle", { pluginId: PLUGIN });
+      const { text, isError } = await client.call("obsidian_dev_cycle");
       assert(!isError, `dev cycle errored: ${text.slice(0, 200)}`);
       return text.split("\n")[0]?.slice(0, 60);
     });
@@ -299,7 +424,7 @@ try {
     await check("telemetry attributes a deliberate plugin throw", async () => {
       const before = await client.call("obsidian_logs", { limit: 1 });
       const cursor = Number(before.json?.cursor);
-      await client.call("obsidian_exercise_command", { commandId: `${PLUGIN}:throw-on-purpose` });
+      await client.call("obsidian_command", { id: `${PLUGIN}:throw-on-purpose` });
       await new Promise((r) => setTimeout(r, 1500));
       const after = await client.call("obsidian_logs", { since: cursor, plugin: PLUGIN });
       assert(new RegExp(PLUGIN).test(after.text), "throw not attributed to the test plugin");
@@ -311,13 +436,12 @@ try {
 
   // -------------------------------------------------------------- error contract
   console.log("\nError contract");
-  await check("a bad vault name yields an actionable error", async () => {
+  await check("a bad command yields an actionable error", async () => {
     const { text, isError } = await client.call("obsidian_cli", {
-      command: "vault",
-      vault: "definitely-not-a-real-vault",
+      command: "definitely-not-a-real-command",
     });
     assert(isError, "expected an error result");
-    assert(/vault/i.test(text), "error does not mention the vault");
+    assert(/command|not found|unknown/i.test(text), "error does not identify the bad command");
   });
 
   await check(
@@ -331,7 +455,7 @@ try {
     },
   );
 } finally {
-  await client.call("obsidian_session_release").catch(() => undefined);
+  await client.call("obsidian_close").catch(() => undefined);
   client.close();
   await removeLiveHome(liveHome.home).catch(() => undefined);
 }

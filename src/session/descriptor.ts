@@ -26,6 +26,17 @@ export type SessionReadiness =
   | { phase: "stopped"; stoppedAt: string }
   | { phase: "failed"; failedAt: string; reason: string };
 
+export interface SessionOwnership {
+  rootPath: string;
+  vaultPath: string;
+  rootDevice: number;
+  rootInode: number;
+  vaultDevice: number;
+  vaultInode: number;
+  /** Linux device numbers can change after a reboot, so bind them to one boot. */
+  bootId?: string;
+}
+
 export interface SessionDescriptor {
   schema: number;
   key: string;
@@ -42,14 +53,7 @@ export interface SessionDescriptor {
    * Filesystem identity recorded at creation. Cleanup must match every field and
    * the derived session path before it can quarantine the scratch directory.
    */
-  ownership?: {
-    rootPath: string;
-    vaultPath: string;
-    rootDevice: number;
-    rootInode: number;
-    vaultDevice: number;
-    vaultInode: number;
-  };
+  ownership?: SessionOwnership;
   instance: {
     userDataDir: string;
     /** Undefined outside Linux, where per-session CLI routing is impossible. */
