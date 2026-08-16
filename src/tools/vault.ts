@@ -282,7 +282,7 @@ export function registerVaultTools(ctx: ServerContext): void {
   });
 
   registry.add({
-    name: "obsidian_open",
+    name: "obsidian_note_open",
     toolset: "vault",
     capability: "cliCommand",
     description: "Open a file in the editor (may focus or spawn tabs). " + CLOSED_VAULT_WARNING,

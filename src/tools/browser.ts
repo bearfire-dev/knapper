@@ -8,7 +8,14 @@
 import { z } from "zod";
 import type { ServerContext } from "../server.js";
 import { passthroughMcpResult } from "../browser/forward.js";
-import { checkTarget, keyDown, keyUp, pressSequentially, reloadWindow } from "../browser/native.js";
+import {
+  checkTarget,
+  clickTarget,
+  keyDown,
+  keyUp,
+  pressSequentially,
+  reloadWindow,
+} from "../browser/native.js";
 import { takeObsidianSnapshot, obsidianSnapshotSchema } from "../browser/obsidian-snapshot.js";
 import type { ProxiedTool } from "../browser/proxy.js";
 import { runExerciseHotkey } from "../devcycle/exercise-hotkey.js";
@@ -80,6 +87,7 @@ export async function registerBrowserTools(ctx: ServerContext): Promise<void> {
   }
 
   for (const tool of proxied) {
+    if (tool.name === "browser_click") continue;
     registry.add({
       name: tool.name,
       toolset: "ui",
@@ -96,12 +104,74 @@ export async function registerBrowserTools(ctx: ServerContext): Promise<void> {
   }
 
   registry.add({
+    name: "browser_click",
+    toolset: "ui",
+    capability: "realInput",
+    description:
+      "Click a snapshot ref or CSS selector in the main Obsidian window or a selected popout.",
+    annotations: { destructiveHint: true },
+    inputSchema: {
+      target: z.string().describe("Window-scoped snapshot ref or CSS selector."),
+      element: z.string().optional().describe("Human-readable element name."),
+      windowId: z.string().optional().describe("Window id from obsidian_snapshot."),
+    },
+    handler: async (args) => {
+      const scopedWindow =
+        typeof args.target === "string" ? /^([^:]+):e\d+$/.exec(args.target)?.[1] : undefined;
+      const windowId = typeof args.windowId === "string" ? args.windowId : scopedWindow;
+      const routedArgs = {
+        ...args,
+        ...(windowId !== undefined ? { windowId } : {}),
+      };
+      return clickTarget(router, routedArgs);
+    },
+  });
+
+  registry.add({
+    name: "browser_handle_dialog",
+    toolset: "ui",
+    capability: "realInput",
+    description:
+      "Queue a one-shot response for the next JavaScript prompt in one Obsidian window. No popup opens. Native alerts and confirms cannot be controlled and are dismissed automatically.",
+    annotations: { destructiveHint: true },
+    inputSchema: {
+      windowId: z.string().optional().describe("Window id from the snapshot or dialog metadata."),
+      accept: z
+        .boolean()
+        .default(true)
+        .describe("Accept the dialog when true. Dismiss it when false."),
+      promptText: z.string().optional().describe("Text to enter when accepting a prompt."),
+    },
+    handler: async (args) => {
+      const windowId = args.windowId as string | undefined;
+      const accept = args.accept !== false;
+      const promptText = args.promptText as string | undefined;
+      const page = await router.playwright.page(undefined, windowId);
+      await page.evaluate(`(() => {
+				const original = globalThis.prompt;
+				const accepted = ${JSON.stringify(accept)};
+				const response = ${JSON.stringify(promptText ?? "")};
+				globalThis.prompt = function () {
+					globalThis.prompt = original;
+					return accepted ? response : null;
+				};
+			})()`);
+      return {
+        text: accept
+          ? "Queued a response for the next JavaScript prompt."
+          : "Queued dismissal for the next JavaScript prompt.",
+        json: { queued: true, accept, windowId: windowId ?? null },
+      };
+    },
+  });
+
+  registry.add({
     name: "obsidian_snapshot",
     toolset: "ui",
     capability: "ariaSnapshot",
     description:
       "ARIA snapshot scoped to part of Obsidian (active leaf, workspace, modal, settings, or a custom selector). " +
-      "Much smaller than browser_snapshot for everyday navigation. Refs in the output work as browser_* `target` values. " +
+      "Returns window-scoped refs that work as browser_* `target` values. " +
       VIRTUALIZED_TREE,
     annotations: { readOnlyHint: true },
     inputSchema: obsidianSnapshotSchema,
@@ -154,6 +224,7 @@ export async function registerBrowserTools(ctx: ServerContext): Promise<void> {
       "Hold a key down (modifiers, chords). Pair with browser_keyup. Does not target an element — focus first.",
     inputSchema: {
       key: z.string().describe("Key name such as Shift, Control, or ArrowDown"),
+      windowId: z.string().optional().describe("Window id from a snapshot."),
     },
     handler: async (args) => keyDown(router, args),
   });
@@ -214,6 +285,7 @@ export async function registerBrowserTools(ctx: ServerContext): Promise<void> {
       "target an element — focus first.",
     inputSchema: {
       key: z.string().describe("Key name matching the prior keydown"),
+      windowId: z.string().optional().describe("Window id from a snapshot."),
     },
     handler: async (args) => keyUp(router, args),
   });

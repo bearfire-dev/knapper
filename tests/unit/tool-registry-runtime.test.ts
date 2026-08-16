@@ -22,7 +22,7 @@ function fakeServer(callbacks: Map<string, ToolCallback>): McpServer {
   } as unknown as McpServer;
 }
 
-describe("ToolRegistry runtime toolsets", () => {
+describe("ToolRegistry runtime", () => {
   it("serializes every handler through one FIFO lane", async () => {
     const handles = new Map<string, ToolCallback>();
     const order: string[] = [];
@@ -35,7 +35,7 @@ describe("ToolRegistry runtime toolsets", () => {
       beforeInvoke: async () => void 0,
     });
     registry.add({
-      name: "workspace_read",
+      name: "obsidian_status",
       toolset: "core",
       description: "Read one workspace through the shared runtime.",
       annotations: { readOnlyHint: true },
@@ -48,9 +48,9 @@ describe("ToolRegistry runtime toolsets", () => {
     });
     registry.bind(fakeServer(handles));
 
-    const first = handles.get("workspace_read")?.({ name: "first" });
+    const first = handles.get("obsidian_status")?.({ name: "first" });
     await vi.waitFor(() => expect(order).toContain("start:first"));
-    const second = handles.get("workspace_read")?.({ name: "second" });
+    const second = handles.get("obsidian_status")?.({ name: "second" });
 
     releaseFirst();
     await Promise.all([first, second]);
@@ -73,7 +73,7 @@ describe("ToolRegistry runtime toolsets", () => {
       },
     });
     registry.add({
-      name: "finalized_call",
+      name: "obsidian_eval",
       toolset: "core",
       description: "Verify that finalization completes before the next queued call starts.",
       handler: async (args) => {
@@ -83,9 +83,9 @@ describe("ToolRegistry runtime toolsets", () => {
     });
     registry.bind(fakeServer(callbacks));
 
-    const first = callbacks.get("finalized_call")?.({ name: "first" });
+    const first = callbacks.get("obsidian_eval")?.({ name: "first" });
     await vi.waitFor(() => expect(order).toContain("after:first"));
-    const second = callbacks.get("finalized_call")?.({ name: "second" });
+    const second = callbacks.get("obsidian_eval")?.({ name: "second" });
     await Promise.resolve();
     expect(order).not.toContain("before:second");
 
@@ -101,7 +101,7 @@ describe("ToolRegistry runtime toolsets", () => {
     ]);
   });
 
-  it("does not register disabled startup-only toolsets", () => {
+  it("does not register specialized tools", () => {
     const callbacks = new Map<string, ToolCallback>();
     const registry = new ToolRegistry(new Set(["core"]), createLogger("error"));
     registry.add({
@@ -113,26 +113,24 @@ describe("ToolRegistry runtime toolsets", () => {
     registry.bind(fakeServer(callbacks));
 
     expect(callbacks.has("browser_example")).toBe(false);
-    expect(registry.toolsetState().disabled).toContain("ui");
-
     expect(callbacks.has("browser_example")).toBe(false);
     expect(registry.byToolset().ui).toBeUndefined();
   });
 
-  it("keeps control-plane tools enabled with their toolset disabled", () => {
+  it("registers only the fixed public surface", () => {
     const callbacks = new Map<string, ToolCallback>();
     const registry = new ToolRegistry(new Set(["core"]), createLogger("error"));
     registry.add({
-      name: "obsidian_toolsets",
+      name: "obsidian_status",
       toolset: "core",
       alwaysEnabled: true,
-      description: "Manage toolsets.",
+      description: "Report status.",
       handler: async () => "ok",
     });
     registry.bind(fakeServer(callbacks));
 
-    expect(callbacks.has("obsidian_toolsets")).toBe(true);
-    expect(registry.names()).toContain("obsidian_toolsets");
+    expect(callbacks.has("obsidian_status")).toBe(true);
+    expect(registry.names()).toContain("obsidian_status");
   });
 
   it("returns native structured content without duplicate fenced JSON", async () => {
@@ -141,14 +139,14 @@ describe("ToolRegistry runtime toolsets", () => {
       audit: false,
     });
     registry.add({
-      name: "structured_example",
+      name: "obsidian_cli",
       toolset: "core",
       description: "Structured example.",
       handler: async () => ({ text: "Found 2 items.", json: { count: 2, items: ["a", "b"] } }),
     });
     registry.bind(fakeServer(callbacks));
 
-    const result = await callbacks.get("structured_example")?.({}, { requestId: 7 });
+    const result = await callbacks.get("obsidian_cli")?.({}, { requestId: 7 });
 
     expect(result?.content).toEqual([{ type: "text", text: "Found 2 items." }]);
     expect(result?.structuredContent).toEqual({ count: 2, items: ["a", "b"] });
@@ -161,14 +159,14 @@ describe("ToolRegistry runtime toolsets", () => {
       audit: false,
     });
     registry.add({
-      name: "json_only_example",
+      name: "obsidian_logs",
       toolset: "core",
       description: "JSON-only example.",
       handler: async () => ({ json: [1, 2] }),
     });
     registry.bind(fakeServer(callbacks));
 
-    const result = await callbacks.get("json_only_example")?.({});
+    const result = await callbacks.get("obsidian_logs")?.({});
 
     expect(result?.content[0]?.text).toContain("1");
     expect(result?.content[0]?.text).not.toContain("```");
@@ -191,7 +189,7 @@ describe("ToolRegistry runtime toolsets", () => {
       }),
     });
     registry.add({
-      name: "audited_example",
+      name: "obsidian_command",
       toolset: "core",
       description: "Audited example.",
       handler: async () => {
@@ -201,7 +199,7 @@ describe("ToolRegistry runtime toolsets", () => {
     });
     registry.bind(fakeServer(callbacks));
 
-    await callbacks.get("audited_example")?.(
+    await callbacks.get("obsidian_command")?.(
       { code: "private code", text: "private note", settings: { token: "private" } },
       { requestId: "request-1" },
     );
@@ -209,7 +207,7 @@ describe("ToolRegistry runtime toolsets", () => {
     expect(order).toEqual(["before", "handler"]);
     expect(events).toHaveLength(1);
     expect(events[0]).toMatchObject({
-      tool: "audited_example",
+      tool: "obsidian_command",
       outcome: "success",
       arguments: {
         count: 3,
@@ -236,14 +234,14 @@ describe("ToolRegistry runtime toolsets", () => {
       afterInvoke,
     });
     registry.add({
-      name: "precondition_failure",
+      name: "obsidian_open",
       toolset: "core",
       description: "Fail after admission to verify that activity cleanup still runs.",
       handler: async () => "unreachable",
     });
     registry.bind(fakeServer(callbacks));
 
-    const result = await callbacks.get("precondition_failure")?.({});
+    const result = await callbacks.get("obsidian_open")?.({});
 
     expect(result?.isError).toBe(true);
     expect(afterInvoke).toHaveBeenCalledOnce();
@@ -257,15 +255,15 @@ describe("ToolRegistry runtime toolsets", () => {
       audit: { write },
     });
     registry.add({
-      name: "stalled_audit_example",
+      name: "obsidian_close",
       toolset: "core",
       description: "Stalled audit example.",
       handler: async () => "ok",
     });
     registry.bind(fakeServer(callbacks));
 
-    await callbacks.get("stalled_audit_example")?.({});
-    await callbacks.get("stalled_audit_example")?.({});
+    await callbacks.get("obsidian_close")?.({});
+    await callbacks.get("obsidian_close")?.({});
 
     expect(write).toHaveBeenCalledTimes(1);
   });
@@ -277,7 +275,7 @@ describe("ToolRegistry runtime toolsets", () => {
       audit: { write: async (event) => void events.push(event) },
     });
     registry.add({
-      name: "failed_example",
+      name: "obsidian_dev_cycle",
       toolset: "core",
       description: "Failed example.",
       handler: async () => {
@@ -286,7 +284,7 @@ describe("ToolRegistry runtime toolsets", () => {
     });
     registry.bind(fakeServer(callbacks));
 
-    const result = await callbacks.get("failed_example")?.({}, { requestId: "request-2" });
+    const result = await callbacks.get("obsidian_dev_cycle")?.({}, { requestId: "request-2" });
 
     expect(result?.isError).toBe(true);
     expect(result?.structuredContent).toMatchObject({ code: "INTERNAL" });

@@ -134,8 +134,8 @@ export class CapabilityRouter {
     });
   }
 
-  /** Rebuild every target-specific transport after the shared config changes. */
-  async rebind(): Promise<void> {
+  /** Rebuild target-specific transports after the shared config changes. */
+  async rebind(supervise = true): Promise<void> {
     if (this.disposed) throw new Error("Cannot rebind a disposed capability router.");
     this.supervisor.stop();
     await this.focus.dispose().catch(() => undefined);
@@ -149,7 +149,7 @@ export class CapabilityRouter {
     this.cliDegradedUntil = 0;
     this.lastCliTimeoutAt = undefined;
     this.buildTarget();
-    this.supervisor.start();
+    if (supervise) this.supervisor.start();
   }
 
   /**
@@ -284,9 +284,18 @@ export class CapabilityRouter {
    */
   async evaluate<T>(
     code: string,
-    opts: { vault?: string } = {},
+    opts: { vault?: string; windowId?: string } = {},
   ): Promise<{ value: T; layer: Layer }> {
     const vault = await this.fence.resolve(opts.vault);
+    if (opts.windowId !== undefined) {
+      const availability = await this.refreshAvailability();
+      if (!availability.playwright) throw cdpPortClosed(this.config.cdpUrl);
+      this.claimDebugger("playwright");
+      return {
+        value: await this.playwright.evaluate<T>(code, vault.name, opts.windowId),
+        layer: "playwright",
+      };
+    }
     const layer = await this.resolve("evaluate");
     if (layer === "playwright") {
       this.claimDebugger("playwright");
@@ -463,9 +472,8 @@ export class CapabilityRouter {
         "OBSIDIAN_NOT_RUNNING",
         `No transport can serve "${capability}": the CLI is disabled and no CDP port is open.`,
         {
-          remediation:
-            "Run the doctor tool for a per-precondition breakdown; it names the tool that fixes each one.",
-          fixedBy: "obsidian_doctor",
+          remediation: "Inspect obsidian_status, then open the private development target again.",
+          fixedBy: "obsidian_open",
           details: { capability, availability },
         },
       );

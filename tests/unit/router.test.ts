@@ -264,15 +264,15 @@ describe("resolve failures name the right precondition", () => {
     cliDisabledAndPortClosed();
     await expect(makeRouter().resolve("cliCommand")).rejects.toMatchObject({
       code: "CLI_DISABLED",
-      fixedBy: "obsidian_setup_cli",
+      fixedBy: "obsidian_open",
     });
   });
 
-  it("points at the doctor when a mixed-preference capability has no transport", async () => {
+  it("points at open when a mixed-preference capability has no transport", async () => {
     nothingAvailable();
     await expect(makeRouter().resolve("evaluate")).rejects.toMatchObject({
       code: "OBSIDIAN_NOT_RUNNING",
-      fixedBy: "obsidian_doctor",
+      fixedBy: "obsidian_open",
     });
   });
 
@@ -335,6 +335,16 @@ describe("runtime rebinding", () => {
     expect(router.cli).not.toBe(oldCli);
     expect(router.playwright).not.toBe(oldPlaywright);
     expect(router.supervisor.started).toBe(true);
+    await router.dispose();
+  });
+
+  it("can rebuild transports without probing the default profile", async () => {
+    nothingAvailable();
+    const router = makeRouter();
+
+    await router.rebind(false);
+
+    expect(router.supervisor.started).toBe(false);
     await router.dispose();
   });
 

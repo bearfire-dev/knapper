@@ -87,4 +87,5 @@ Off-screen files **do not** have `.nav-file-title` nodes. To enumerate paths, us
 | `settings`    | `.vertical-tab-content, .modal.mod-settings` |
 | `selector`    | Your CSS string                              |
 
-Refs in scoped snapshots use the same `target` parameter as full `browser_snapshot` (e.g. `e64`).
+Refs in scoped snapshots use the `target` parameter on browser tools. Each ref
+includes its window ID, for example `A1B2:e64`.

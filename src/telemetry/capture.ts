@@ -74,6 +74,8 @@ export class TelemetryCapture {
   private wired = new WeakSet<Page>();
   /** Pages that already have network listeners (separate so network can be enabled later). */
   private networkWired = new WeakSet<Page>();
+  /** Stable window identity recorded once when a page is wired. */
+  private windowIds = new WeakMap<Page, string>();
   /** Wired pages in the current context, retained so status can re-check the fence. */
   private subscribedPages = new Set<Page>();
   /** Context we attached the `page` listener to; changes after CDP reconnect. */
@@ -109,6 +111,7 @@ export class TelemetryCapture {
     this.generation++;
     this.wired = new WeakSet<Page>();
     this.networkWired = new WeakSet<Page>();
+    this.windowIds = new WeakMap<Page, string>();
     this.subscribedPages = new Set<Page>();
     this.subscribedContext = undefined;
     this.armed = false;
@@ -161,6 +164,7 @@ export class TelemetryCapture {
       this.subscribedPages = new Set<Page>();
       this.wired = new WeakSet<Page>();
       this.networkWired = new WeakSet<Page>();
+      this.windowIds = new WeakMap<Page, string>();
     }
 
     // Catch windows opened after we attach (popouts, new vault windows). A window
@@ -202,6 +206,11 @@ export class TelemetryCapture {
   private async wirePage(page: Page, network: boolean): Promise<boolean> {
     let changed = false;
     this.subscribedPages.add(page);
+    const windowId =
+      typeof this.router.playwright.windowIdFor === "function"
+        ? await this.router.playwright.windowIdFor(page)
+        : undefined;
+    if (windowId !== undefined) this.windowIds.set(page, windowId);
     const generation = this.generation;
 
     if (!this.wired.has(page)) {
@@ -304,7 +313,11 @@ export class TelemetryCapture {
         !(await this.isAuthorized(page))
       )
         return;
-      this.store.add(record);
+      const windowId = this.windowIds.get(page);
+      this.store.add({
+        ...record,
+        ...(windowId !== undefined ? { windowId } : {}),
+      });
     })().catch((e) => this.logger.debug("telemetry event skipped", { error: String(e) }));
   }
 

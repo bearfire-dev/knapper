@@ -106,13 +106,13 @@ jobs:
           echo "Releasing v$VERSION"
 
       - name: Manifests agree with package.json
-        run: node scripts/sync-version.mjs --check
+        run: npm run versions:check
 
       - name: Build
         run: npm run build
 
       - name: Degraded-mode smoke test on the build
-        run: node scripts/ci-smoke.mjs
+        run: npm run smoke
 
       # The tarball attached below is the only distribution artifact, so packing it
       # is a release gate rather than a convenience: if `npm pack` fails, no user

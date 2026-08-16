@@ -14,7 +14,6 @@ import {
 import { CapabilityRouter } from "./connection/router.js";
 import { ToolRegistry } from "./tools/registry.js";
 import { createLogger, type Logger } from "./util/logger.js";
-import { TOOLSET_DESCRIPTIONS } from "./toolsets.js";
 import { registerCoreTools } from "./tools/core.js";
 import { registerProvisioningTools } from "./tools/provisioning.js";
 import { registerSessionTools } from "./tools/session.js";
@@ -134,26 +133,22 @@ async function packageVersion(): Promise<string> {
  * before it answers "how do I drive it?", because an agent that does not connect
  * a request to this server never reads the second half.
  */
-const INSTRUCTIONS = `knapper drives a **live Obsidian desktop application** (the Markdown note-taking app by Dynalist) over MCP. It automates the real running app on this machine — not a copy of the vault on disk, and not a web service.
+const INSTRUCTIONS = `Knapper drives one live Obsidian desktop application for extension development. It uses a private Obsidian profile and a vault that the agent selects explicitly.
 
 USE THIS SERVER WHEN the task involves:
-- Developing, building, reloading, or testing an **Obsidian plugin** or theme — this is its primary purpose. obsidian_dev_cycle answers "did my plugin change work?" in one call.
-- Reading, creating, editing, moving, or searching notes in an **Obsidian vault**.
-- Driving the Obsidian **UI**: clicking, typing, opening the command palette, screenshotting, inspecting the DOM or accessibility tree.
-- Reading Obsidian's **console output, errors, or plugin stack traces**.
-- Anything phrased as "in Obsidian", "my vault", "my notes", "this plugin", when Obsidian is the app in question.
+- Build, link, reload, or test an Obsidian plugin.
+- Run Obsidian commands or its raw CLI.
+- Evaluate code in the main renderer or a popout window.
+- Drive the main window or popouts with real input.
+- Read console, error, and optional network logs across all windows.
 
-DO NOT USE IT FOR: general web browsing or automating other websites (the browser_* tools here are bound to the Obsidian window), editing this project's own source files, or reading Markdown that merely happens to live outside a vault — ordinary file tools are better for that.
+START: call obsidian_open with an absolute vaultPath. The path must be inside and ignored by the plugin Git repository. Pass pluginDir to link and load one plugin. Knapper creates the vault directory when needed. Operational tools then use this target without a handle.
 
-GETTING STARTED: call obsidian_session_open for an isolated scratch session. Use target="default" only when the user explicitly wants their own Obsidian profile. Operational tools use the active session automatically and never require a handle.
+WINDOWS: obsidian_status lists the main window and popouts with stable windowId values. obsidian_snapshot accepts a windowId and returns window-scoped refs. Pass those refs to browser tools. browser_handle_dialog queues a one-shot response before an action calls JavaScript prompt. Alert and confirm dialogs are not supported and are dismissed automatically.
 
-CONCURRENCY: Knapper controls one Obsidian target and runs one operation at a time. obsidian_status reports whether another Knapper process used the target recently.
+DEBUGGING: obsidian_dev_cycle rebuilds and reloads the linked plugin. obsidian_logs reads captured records with a cursor. obsidian_eval has the Obsidian app object in the main renderer. In a popout it evaluates against that window's DOM context.
 
-SAFETY: isolated sessions always use Knapper-owned scratch vaults. obsidian_session_reset stops the managed instance and moves its verified root to recoverable Knapper trash. Cleanup never deletes a user vault. Existing vault access needs an external authorization that the user creates from a terminal. Knapper never treats an Obsidian registry entry or a file inside a vault as deletion authority.
-
-TASK INDEX: select a target with obsidian_session_open; diagnose setup with obsidian_doctor; inspect transports with obsidian_capabilities; reload a plugin with obsidian_dev_cycle; inspect UI with obsidian_snapshot; read new errors with obsidian_logs.
-
-CONVENTIONS: use obsidian_* tools for app, vault, and plugin state; browser_* tools for real input. Browser tools are snapshot-first — call browser_snapshot (or the cheaper obsidian_snapshot), then pass a returned ref as "target"; a CSS selector also works. Prefer obsidian_command over clicking through menus. Read console output with obsidian_logs, passing the previous call's cursor as "since" to see only what is new.`;
+LIMITS: Knapper exposes one fixed 20-tool surface. It does not attach to the user's existing profile. It does not support graph or canvas coordinate automation. Call obsidian_close before you select another vault.`;
 
 export async function createServerContext(config: Config): Promise<ServerContext> {
   const logger = createLogger(config.logLevel);
@@ -168,12 +163,6 @@ export async function createServerContext(config: Config): Promise<ServerContext
     baseConfig.cliIsolation = unbound.cliIsolation;
     delete baseConfig.sessionId;
     delete baseConfig.runtimeDir;
-  }
-
-  if (config.unknownToolsets.length > 0) {
-    logger.warn(`ignoring unknown toolset name(s): ${config.unknownToolsets.join(", ")}`, {
-      valid: Object.keys(TOOLSET_DESCRIPTIONS),
-    });
   }
 
   const router = new CapabilityRouter(config, logger);
@@ -201,14 +190,7 @@ export async function createServerContext(config: Config): Promise<ServerContext
     const states = await Promise.all(descriptors.map((descriptor) => sessionState(descriptor)));
     return states.includes("live");
   };
-  const statusOnlyTools = new Set([
-    "obsidian_status",
-    "obsidian_doctor",
-    "obsidian_session_status",
-    "obsidian_capabilities",
-    "obsidian_toolsets",
-    "obsidian_tool_catalog",
-  ]);
+  const statusOnlyTools = new Set(["obsidian_status"]);
   const registry = new ToolRegistry(config.enabledToolsets, logger, telemetry, {
     beforeInvoke: async (definition) => {
       if (!statusOnlyTools.has(definition.name)) {
@@ -221,14 +203,14 @@ export async function createServerContext(config: Config): Promise<ServerContext
       if (ctx.targetKind === undefined) {
         throw new UobError("SESSION_NOT_FOUND", "No Obsidian session is active.", {
           remediation: "Open an isolated session before you use operational tools.",
-          fixedBy: "obsidian_session_open",
+          fixedBy: "obsidian_open",
         });
       }
       if (ctx.targetKind === "isolated") {
         if (ctx.currentSessionKey === undefined) {
           throw new UobError("SESSION_NOT_FOUND", "The active session has no descriptor.", {
             remediation: "Open a new isolated session.",
-            fixedBy: "obsidian_session_open",
+            fixedBy: "obsidian_open",
           });
         }
         let descriptor = await readDescriptor(ctx.currentSessionKey);
@@ -236,7 +218,7 @@ export async function createServerContext(config: Config): Promise<ServerContext
           throw new UobError(
             "SESSION_NOT_FOUND",
             `Session ${ctx.currentSessionKey} no longer has a descriptor.`,
-            { remediation: "Open a new isolated session.", fixedBy: "obsidian_session_open" },
+            { remediation: "Open a new private profile.", fixedBy: "obsidian_open" },
           );
         }
         if (descriptor.readiness.phase === "starting") {
@@ -275,7 +257,7 @@ export async function createServerContext(config: Config): Promise<ServerContext
     afterInvoke: async (definition, _args, _requestContext, outcome) => {
       if (statusOnlyTools.has(definition.name)) return;
       const releaseSucceeded =
-        definition.name === "obsidian_session_release" && !(outcome instanceof UobError);
+        definition.name === "obsidian_close" && !(outcome instanceof UobError);
       await activity.complete(releaseSucceeded ? false : await managedSessionOpen());
       if (releaseSucceeded) await activity.release();
     },
@@ -335,9 +317,9 @@ export async function createServerContext(config: Config): Promise<ServerContext
       await browserProxy.close();
       capture.reset();
       restoreConfig(config, baseConfig);
-      await router.rebind();
+      await router.rebind(false);
       ctx.currentSessionKey = undefined;
-      ctx.targetKind = "default";
+      ctx.targetKind = undefined;
     },
     selectTelemetry: (scope) => telemetry.select(scope),
     archiveTelemetry: (scope, destinationRoot) => telemetry.archive(scope, destinationRoot),
@@ -362,10 +344,6 @@ export async function createServerContext(config: Config): Promise<ServerContext
   registerTelemetryTools(ctx);
   registerPluginDevTools(ctx);
   await registerBrowserTools(ctx);
-
-  // Starts detached and stays quiet until Obsidian appears; stopped by
-  // `router.dispose()`, which the CLI already calls on shutdown.
-  router.supervisor.start();
 
   return ctx;
 }

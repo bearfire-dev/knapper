@@ -54,7 +54,6 @@ the installed `knapper` binary:
       "command": ["knapper"],
       "enabled": true,
       "environment": {
-        "KNAP_TOOLSETS": "all",
         "KNAP_SCREENSHOT_DIR": "/absolute/path/to/knapper-output"
       }
     }
@@ -62,8 +61,8 @@ the installed `knapper` binary:
 }
 ```
 
-Both environment variables are optional. The MCP surface is fixed at initialization.
-`KNAP_SCREENSHOT_DIR` must name the screenshot output root.
+`KNAP_SCREENSHOT_DIR` is optional. The MCP surface always contains exactly 20
+tools. Knapper does not support toolsets or a full mode.
 
 Use this command array to track the default branch:
 
@@ -84,9 +83,8 @@ The `knap` binary remains a compatibility alias. New configurations must use
   are different dialects, so knapper reads every setting from a plain environment variable
   instead of being expressed three ways. Set them in each client's MCP `env` block. See
   [configuration.md](configuration.md).
-- **Enabled `browser_*` tools remain visible when Obsidian is offline.** Calls that need CDP return an
-  actionable error with `obsidian_launch` as the fixing tool. Cold-start Obsidian with the debug
-  port, then retry the same call. You do not need to reconnect only to refresh the tool list.
+- **All 20 tools remain visible when Obsidian is offline.** Calls that need CDP
+  return an actionable error. Call `obsidian_open`, then retry the same call.
 
 ## Verifying a host
 
@@ -95,8 +93,8 @@ not require Obsidian:
 
 ```bash
 npx -y github:bearfire-dev/knapper --help    # server starts
-npm run smoke                              # degraded-mode MCP contract, including browser tools
+npm run smoke                              # fixed 20-tool MCP contract
 ```
 
-Then, in the host, confirm `obsidian-instance-setup` and `obsidian-plugin-dev` appear as
-skills and that `obsidian_doctor` is callable.
+Then, in the host, confirm `obsidian-plugin-dev` appears as a skill and that
+`obsidian_open` and `obsidian_status` are callable.

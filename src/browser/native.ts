@@ -16,14 +16,17 @@ import type { CapabilityRouter } from "../connection/router.js";
 import { UobError } from "../util/errors.js";
 
 function targetLocator(page: Page, target: string) {
+  const scoped = /^([^:]+):(e\d+)$/.exec(target)?.[2] ?? target;
+  target = scoped;
   if (/^e\d+$/.test(target)) return page.locator(`aria-ref=${target}`);
   if (target.startsWith("aria-ref=")) return page.locator(target);
   return page.locator(target);
 }
 
-async function page(router: CapabilityRouter): Promise<Page> {
+async function page(router: CapabilityRouter, args?: Record<string, unknown>): Promise<Page> {
   await router.playwright.connect();
-  return router.playwright.page();
+  const windowId = typeof args?.windowId === "string" ? args.windowId : undefined;
+  return router.playwright.page(undefined, windowId);
 }
 
 export async function reloadWindow(router: CapabilityRouter): Promise<string> {
@@ -65,7 +68,7 @@ export async function checkTarget(
   if (typeof target !== "string" || target === "") {
     throw new UobError("INVALID_ARGUMENT", "target is required (snapshot ref or CSS selector).");
   }
-  const p = await page(router);
+  const p = await page(router, args);
   await router.focus.run(p, async () => {
     await targetLocator(p, target).check();
   });
@@ -81,7 +84,7 @@ export async function clickTarget(
   if (typeof target !== "string" || target === "") {
     throw new UobError("INVALID_ARGUMENT", "target is required (snapshot ref or CSS selector).");
   }
-  const p = await page(router);
+  const p = await page(router, args);
   await router.focus.run(p, async () => {
     await targetLocator(p, target).click({ timeout: 5000 });
   });
@@ -96,7 +99,7 @@ export async function pressSequentially(
   if (typeof text !== "string") {
     throw new UobError("INVALID_ARGUMENT", "text is required.");
   }
-  const p = await page(router);
+  const p = await page(router, args);
   await router.focus.run(p, async () => {
     await p.keyboard.type(text);
     if (args.submit === true) await p.keyboard.press("Enter");
@@ -112,7 +115,7 @@ export async function keyDown(
   if (typeof key !== "string" || key === "") {
     throw new UobError("INVALID_ARGUMENT", "key is required.");
   }
-  const p = await page(router);
+  const p = await page(router, args);
   // Acquire without releasing: the hold belongs to the held key, and browser_keyup
   // owns the other end. A CDP disconnect or shutdown force-releases it, so a caller
   // that never pairs the two cannot leave the window emulating focus forever.
@@ -135,7 +138,7 @@ export async function keyUp(
   if (typeof key !== "string" || key === "") {
     throw new UobError("INVALID_ARGUMENT", "key is required.");
   }
-  const p = await page(router);
+  const p = await page(router, args);
   try {
     await p.keyboard.up(key);
   } finally {

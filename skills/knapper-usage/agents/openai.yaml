@@ -1,0 +1,4 @@
+interface:
+  display_name: "Knapper Usage"
+  short_description: "Connect, prepare, and use Knapper sessions"
+  default_prompt: "Use $knapper-usage to open one private Obsidian profile and exercise this plugin."
