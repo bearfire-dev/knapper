@@ -1,11 +1,4 @@
-/**
- * Toolset gating.
- *
- * The proxied @playwright/mcp surface alone is 24 tools by default and 69 with every
- * capability enabled. Stacked on the Obsidian surface that is well over 100 tools,
- * which is more context than a session should carry and measurably degrades tool
- * selection. Gating is a correctness feature here, not a convenience.
- */
+/** Internal classifications for specialized tool definitions. */
 
 export const TOOLSETS = [
   "core",
@@ -20,14 +13,8 @@ export const TOOLSETS = [
 
 export type Toolset = (typeof TOOLSETS)[number];
 
-/** Toolsets that every MCP server registers at startup. */
-export const DEFAULT_TOOLSETS: readonly Toolset[] = [
-  "core",
-  "ui",
-  "telemetry",
-  "plugin-dev",
-  "editor",
-];
+/** All toolsets remain an internal classification for tool definitions. */
+export const DEFAULT_TOOLSETS: readonly Toolset[] = TOOLSETS;
 
 export const TOOLSET_DESCRIPTIONS: Record<Toolset, string> = {
   core: "Status, doctor, launch, eval, CLI, and command-palette execution.",
@@ -42,41 +29,28 @@ export const TOOLSET_DESCRIPTIONS: Record<Toolset, string> = {
   authoring: "Themes, snippets, frontmatter properties, tags, tasks, daily notes, and templates.",
 };
 
-export function isToolset(value: string): value is Toolset {
-  return (TOOLSETS as readonly string[]).includes(value);
-}
+/** Public MCP tools. Other definitions are implementation details. */
+export const PUBLIC_TOOL_NAMES = [
+  "obsidian_open",
+  "obsidian_status",
+  "obsidian_close",
+  "obsidian_dev_cycle",
+  "obsidian_commands",
+  "obsidian_command",
+  "obsidian_eval",
+  "obsidian_cli",
+  "obsidian_logs",
+  "obsidian_snapshot",
+  "browser_click",
+  "browser_type",
+  "browser_press_key",
+  "browser_hover",
+  "browser_drag",
+  "browser_take_screenshot",
+  "browser_handle_dialog",
+  "browser_mouse_wheel",
+  "browser_keydown",
+  "browser_keyup",
+] as const;
 
-export interface ToolsetParseResult {
-  enabled: Set<Toolset>;
-  unknown: string[];
-}
-
-/**
- * Parse a comma-separated toolset spec. `all` enables every toolset. Unknown names
- * are collected so a typo in an environment variable does not prevent startup.
- */
-export function parseToolsets(spec: string | undefined): ToolsetParseResult {
-  if (spec === undefined || spec.trim() === "") {
-    return { enabled: new Set(DEFAULT_TOOLSETS), unknown: [] };
-  }
-
-  const tokens = spec
-    .split(",")
-    .map((t) => t.trim().toLowerCase())
-    .filter((t) => t !== "");
-  const unknown = tokens.filter((token) => token !== "all" && !isToolset(token));
-
-  if (tokens.includes("all")) {
-    return { enabled: new Set(TOOLSETS), unknown };
-  }
-
-  const enabled = new Set<Toolset>();
-  for (const token of tokens) {
-    if (isToolset(token)) enabled.add(token);
-  }
-
-  // An all-garbage spec falls back to the default startup surface.
-  if (enabled.size === 0) return { enabled: new Set(DEFAULT_TOOLSETS), unknown };
-
-  return { enabled, unknown };
-}
+export const PUBLIC_TOOL_NAME_SET: ReadonlySet<string> = new Set(PUBLIC_TOOL_NAMES);

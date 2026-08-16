@@ -29,8 +29,8 @@ two in agreement; do not add a selector here that is not there.
 | `.tree-item-self`                    | Generic tree rows                  |
 | `.menu-item`                         | Menu entries                       |
 
-Common `data-type` values: `markdown`, `file-explorer`, `search`, `graph`, `outline`,
-`canvas`, `bases`. Prefer `[data-type="markdown"]` plus `.mod-active` to hit the editor leaf.
+Common `data-type` values: `markdown`, `file-explorer`, `search`, and `outline`.
+Prefer `[data-type="markdown"]` plus `.mod-active` to hit the editor leaf.
 
 ## Body-level state (cheap assertions)
 
@@ -42,9 +42,7 @@ Common `data-type` values: `markdown`, `file-explorer`, `search`, `graph`, `outl
 ## Avoid for automation
 
 - `.bases-*` — Bases plugin internals change often
-- `.canvas-*` — Canvas internals
 - `.cm-hmd-*` — CodeMirror markdown-mode classes
-- Deep graph/canvas SVG internals — use `browser_mouse_*` or app APIs instead
 
 ## Virtualization reminder
 
@@ -59,7 +57,7 @@ level when waiting for toasts.
 ## `obsidian_snapshot` scopes
 
 Obsidian's full accessibility tree is large, so prefer a scoped snapshot over
-`browser_snapshot` when you already know which region you care about.
+`obsidian_snapshot` when you already know which region you care about.
 
 | Scope         | Selector used                                |
 | ------------- | -------------------------------------------- |

@@ -1,5 +1,5 @@
 /**
- * Obsidian-scoped ARIA snapshots — smaller than a full browser_snapshot tree.
+ * Obsidian-scoped ARIA snapshots for the fixed browser surface.
  */
 
 import { z } from "zod";
@@ -46,6 +46,7 @@ export const obsidianSnapshotSchema = {
       "CSS selector when scope is selector (e.g. .workspace-leaf-content[data-type=markdown])",
     ),
   depth: z.number().optional().describe("Optional depth limit passed to ariaSnapshot"),
+  windowId: z.string().optional().describe("Window id from a prior snapshot or obsidian_status."),
 };
 
 export async function takeObsidianSnapshot(
@@ -65,7 +66,8 @@ export async function takeObsidianSnapshot(
   }
 
   await router.playwright.connect();
-  const page = await router.playwright.page();
+  const page = await router.playwright.page(undefined, parsed.windowId);
+  const windowId = await router.playwright.windowIdFor(page);
   const locator = page.locator(selector).first();
   const count = await locator.count();
   if (count === 0) {
@@ -79,7 +81,9 @@ export async function takeObsidianSnapshot(
   if (parsed.depth !== undefined) options.depth = parsed.depth;
 
   const yaml = await locator.ariaSnapshot(options);
-  const capped = truncateText(yaml, SNAPSHOT_CAP);
+  const scopedYaml =
+    windowId === undefined ? yaml : yaml.replace(/\[ref=(e\d+)\]/g, `[ref=${windowId}:$1]`);
+  const capped = truncateText(scopedYaml, SNAPSHOT_CAP);
 
   const lines = [
     `Scoped ARIA snapshot (${scope})`,
@@ -95,6 +99,7 @@ export async function takeObsidianSnapshot(
     json: {
       scope,
       selector,
+      ...(windowId !== undefined ? { windowId } : {}),
       truncated: capped.truncated,
       ...(capped.originalLength !== undefined ? { originalLength: capped.originalLength } : {}),
       lineCount: yaml.split("\n").length,

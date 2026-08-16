@@ -36,16 +36,9 @@ function bindWithConfigs(
 }
 
 describe("tool catalog", () => {
-  it("searches disabled definitions and paginates in stable name order", () => {
+  it("exposes only public definitions and paginates in stable name order", () => {
     const toolRegistry = registry(["core"]);
     toolRegistry.addAll([
-      {
-        name: "browser_snapshot",
-        toolset: "ui",
-        description: "Read the browser accessibility tree.",
-        annotations: { readOnlyHint: true },
-        handler: async () => "ok",
-      },
       {
         name: "browser_type",
         toolset: "ui",
@@ -60,29 +53,16 @@ describe("tool catalog", () => {
       },
     ]);
 
-    const first = toolRegistry.catalog({
-      query: "browser",
-      enabled: false,
-      limit: 1,
-    });
+    const first = toolRegistry.catalog({ query: "browser", limit: 1 });
     expect(first).toEqual({
-      items: [{ name: "browser_snapshot", toolset: "ui", enabled: false }],
-      total: 2,
-      nextCursor: "1",
+      items: [{ name: "browser_type", toolset: "ui", enabled: true }],
+      total: 1,
     });
-
-    const second = toolRegistry.catalog({
-      query: "browser",
-      enabled: false,
-      cursor: first.nextCursor,
-      limit: 1,
-      detail: "full",
-    });
-    expect(second.nextCursor).toBeUndefined();
-    expect(second.items[0]).toMatchObject({
+    expect(toolRegistry.catalog({ query: "browser_snapshot" }).items).toEqual([]);
+    expect(toolRegistry.catalog({ query: "browser", detail: "full" }).items[0]).toMatchObject({
       name: "browser_type",
       toolset: "ui",
-      enabled: false,
+      enabled: true,
       description: "Type into the browser.",
       capability: null,
       annotations: { readOnlyHint: false },
@@ -118,9 +98,7 @@ describe("static tool surface", () => {
     const configs = new Map<string, Record<string, unknown>>();
     bindWithConfigs(toolRegistry, configs);
 
-    expect(configs.has("browser_example")).toBe(true);
-    const inputSchema = configs.get("browser_example")?.inputSchema as Record<string, unknown>;
-    expect(Object.keys(inputSchema)).toEqual(["target"]);
+    expect(configs.has("browser_example")).toBe(false);
   });
 });
 
@@ -129,14 +107,14 @@ describe("tool output schemas", () => {
     const toolRegistry = registry(["core", "ui"]);
     const nativeOutput = { count: z.number() };
     toolRegistry.add({
-      name: "native_output",
+      name: "obsidian_status",
       toolset: "core",
       description: "Return a native output.",
       outputSchema: nativeOutput,
       handler: async () => ({ json: { count: 1 } }),
     });
     toolRegistry.add({
-      name: "proxied_output",
+      name: "browser_type",
       toolset: "ui",
       description: "Return a proxied output.",
       jsonOutputSchema: {
@@ -150,8 +128,8 @@ describe("tool output schemas", () => {
     const configs = new Map<string, Record<string, unknown>>();
     bindWithConfigs(toolRegistry, configs);
 
-    expect(configs.get("native_output")?.outputSchema).toBe(nativeOutput);
-    expect(configs.get("proxied_output")?.outputSchema).toMatchObject({
+    expect(configs.get("obsidian_status")?.outputSchema).toBe(nativeOutput);
+    expect(configs.get("browser_type")?.outputSchema).toMatchObject({
       value: expect.anything(),
     });
   });

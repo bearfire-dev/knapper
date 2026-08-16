@@ -115,20 +115,17 @@ export function launchCommandForPlatform(port: number, vault?: string): string {
   }
 }
 
-export function obsidianNotRunning(port: number): UobError {
+export function obsidianNotRunning(_port: number): UobError {
   return new UobError("OBSIDIAN_NOT_RUNNING", "Obsidian is not running.", {
-    remediation: `Start it with the debug port enabled:\n  ${launchCommandForPlatform(port)}`,
-    fixedBy: "obsidian_launch",
+    remediation: "Open the development target again.",
+    fixedBy: "obsidian_open",
   });
 }
 
 export function cliDisabled(): UobError {
   return new UobError("CLI_DISABLED", "Obsidian's command line interface is disabled.", {
-    remediation:
-      'Enable it in Settings > General > Advanced > "Command line interface", or let this server ' +
-      "flip the global `cli` flag for you. Note this cannot be fixed through the CLI itself, since " +
-      "the CLI is what is disabled.",
-    fixedBy: "obsidian_setup_cli",
+    remediation: "Open the private development target again so Knapper can enable its CLI.",
+    fixedBy: "obsidian_open",
   });
 }
 
@@ -138,7 +135,7 @@ export function cdpPortClosed(url: string): UobError {
       "Obsidian only opens a debug port when launched with `--remote-debugging-port`. Because of " +
       "Electron's single-instance lock, adding the flag to an already-running instance silently " +
       "does nothing — Obsidian must be fully quit and cold-started with the flag.",
-    fixedBy: "obsidian_launch",
+    fixedBy: "obsidian_open",
     details: { cdpUrl: url },
   });
 }
@@ -170,10 +167,9 @@ export function vaultNotFound(name: string, known: string[]): UobError {
 export function appUnavailable(): UobError {
   return new UobError("APP_UNAVAILABLE", "`window.app` is not available on the attached target.", {
     remediation:
-      "The attached target is either not an Obsidian window or has not finished loading. List the " +
-      "available targets and attach explicitly. Note that Obsidian popout windows report their URL " +
-      "as `about:blank`, so they are easy to mistake for blank tabs.",
-    fixedBy: "obsidian_list_targets",
+      "The selected Obsidian window has not finished loading, or the window closed. Inspect " +
+      "obsidian_status and take a fresh obsidian_snapshot.",
+    fixedBy: "obsidian_status",
   });
 }
 

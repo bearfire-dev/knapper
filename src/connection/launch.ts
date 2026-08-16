@@ -341,7 +341,7 @@ function launchFailed(
   return new UobError("OBSIDIAN_LAUNCH_FAILED", message, {
     remediation:
       "Review the captured launch output, correct the reported startup problem, then launch Obsidian again.",
-    fixedBy: "obsidian_launch",
+    fixedBy: "obsidian_open",
     details,
     ...(cause !== undefined ? { cause } : {}),
   });
@@ -430,9 +430,8 @@ async function launchObsidianWithDependencies(
       "Obsidian is already running but no CDP debug port is open.",
       {
         remediation:
-          "Electron's single-instance lock drops `--remote-debugging-port` on a second launch. " +
-          "Call obsidian_launch with restart=true (or force=true) to quit and cold-start with CDP.",
-        fixedBy: "obsidian_launch",
+          "Close the private development target, then open it again so Obsidian cold-starts with CDP.",
+        fixedBy: "obsidian_close",
         details: { running: true, cdpUrl },
       },
     );

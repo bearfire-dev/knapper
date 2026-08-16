@@ -16,7 +16,7 @@ import { stat } from "node:fs/promises";
 import { writeManagedMarker, readManagedMarker } from "../dist/connection/vaults.js";
 
 /** Returns a short status string, or throws when the vault is missing. */
-export async function authorizeTestVault(dir) {
+export async function authorizeTestVault(dir: string): Promise<string> {
   if (typeof dir !== "string" || dir.length === 0) {
     throw new Error("Pass an explicit vault directory to authorizeTestVault.");
   }
@@ -38,6 +38,7 @@ export async function authorizeTestVault(dir) {
 
 if (import.meta.url === `file://${process.argv[1]}`) {
   const dir = process.argv[2];
+  if (!dir) throw new Error("Pass an explicit vault directory to authorizeTestVault.");
   const status = await authorizeTestVault(dir);
   process.stdout.write(`${dir}: ${status}\n`);
 }

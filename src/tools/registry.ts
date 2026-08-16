@@ -14,7 +14,7 @@
 import type { McpServer } from "@modelcontextprotocol/server";
 import { z, type ZodRawShape } from "zod";
 import type { Capability } from "../capabilities.js";
-import type { Toolset } from "../toolsets.js";
+import { PUBLIC_TOOL_NAME_SET, type Toolset } from "../toolsets.js";
 import type { Logger } from "../util/logger.js";
 import type { TelemetryStore } from "../telemetry/store.js";
 import { appendTelemetrySummary } from "../telemetry/helpers.js";
@@ -291,6 +291,7 @@ export class ToolRegistry {
 
     const limit = Math.min(Math.max(options.limit ?? 20, 1), 100);
     const definitions = [...this.definitions.values()]
+      .filter((def) => PUBLIC_TOOL_NAME_SET.has(def.name))
       .filter((def) => options.toolset === undefined || def.toolset === options.toolset)
       .filter(
         (def) => options.enabled === undefined || this.isDefinitionEnabled(def) === options.enabled,
@@ -325,6 +326,7 @@ export class ToolRegistry {
   groupAllByToolset(): Record<string, string[]> {
     const out: Record<string, string[]> = {};
     for (const def of this.definitions.values()) {
+      if (!PUBLIC_TOOL_NAME_SET.has(def.name)) continue;
       (out[def.toolset] ??= []).push(def.name);
     }
     for (const list of Object.values(out)) list.sort();
@@ -332,7 +334,7 @@ export class ToolRegistry {
   }
 
   private isDefinitionEnabled(def: ToolDefinition): boolean {
-    return def.alwaysEnabled === true || this.enabledToolsets.has(def.toolset);
+    return PUBLIC_TOOL_NAME_SET.has(def.name);
   }
 
   /**
@@ -378,7 +380,7 @@ export class ToolRegistry {
           let auditError: AuditErrorEnvelope | undefined;
           let completedOutcome: ToolOutcome | UobError | undefined;
           try {
-            return await this.lock.run("exclusive", def.name, async () => {
+            const invoke = async (): Promise<McpToolResult> => {
               try {
                 // Read the telemetry cursor after admission, not before: a call that
                 // waited in the queue would otherwise report every log line produced
@@ -451,7 +453,8 @@ export class ToolRegistry {
                   );
                 }
               }
-            });
+            };
+            return await this.lock.run("exclusive", def.name, invoke);
           } catch (e) {
             const err = toUobError(e);
             auditOutcome = "error";

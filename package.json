@@ -1,6 +1,6 @@
 {
   "name": "knapper",
-  "version": "0.7.0-beta.1",
+  "version": "0.7.0",
   "description": "MCP server for stateless Obsidian plugin development with one managed session, browser automation, and debugging.",
   "keywords": [
     "automation",
@@ -41,24 +41,24 @@
   ],
   "type": "module",
   "scripts": {
-    "clean": "node scripts/clean-dist.mjs",
-    "build": "npm run clean && tsc",
-    "dev": "tsc --watch",
+    "clean": "tsx scripts/clean-dist.ts",
+    "build": "npm run clean && tsgo",
+    "dev": "tsgo --watch",
     "start": "node dist/cli.js",
     "check": "vp check",
     "check:fix": "vp check --fix",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsgo --project tsconfig.check.json",
     "test": "vitest run",
     "test:watch": "vitest",
-    "smoke": "node scripts/ci-smoke.mjs",
-    "acceptance": "node scripts/acceptance.mjs",
-    "fence": "node scripts/fence-live.mjs",
-    "bg-input": "node scripts/background-input-live.mjs",
-    "e2e": "node scripts/e2e.mjs",
-    "versions:check": "node scripts/sync-version.mjs --check",
-    "versions:sync": "node scripts/sync-version.mjs",
+    "smoke": "tsx scripts/ci-smoke.ts",
+    "acceptance": "tsx scripts/acceptance.ts",
+    "fence": "tsx scripts/fence-live.ts",
+    "bg-input": "tsx scripts/background-input-live.ts",
+    "e2e": "tsx scripts/e2e.ts",
+    "versions:check": "tsx scripts/sync-version.ts --check",
+    "versions:sync": "tsx scripts/sync-version.ts",
     "prepare": "npm run versions:check && npm run build",
-    "workspaces": "node scripts/workspaces-live.mjs"
+    "workspaces": "tsx scripts/workspaces-live.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/client": "2.0.0",
@@ -71,8 +71,9 @@
   "devDependencies": {
     "@types/node": "^22.15.17",
     "@types/yargs": "^17.0.33",
+    "@typescript/native-preview": "7.0.0-dev.20260707.2",
     "playwright-core": "1.63.0-alpha-2026-08-05",
-    "typescript": "^5.8.3",
+    "tsx": "^4.20.6",
     "vite-plus": "0.2.6",
     "vitest": "^4.1.1"
   },

@@ -9,7 +9,7 @@
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { isLogLevel, type LogLevel } from "./util/logger.js";
-import { parseToolsets, type Toolset } from "./toolsets.js";
+import { DEFAULT_TOOLSETS, type Toolset } from "./toolsets.js";
 
 /** Transport the MCP server listens on. */
 export type TransportKind = "stdio" | "http";
@@ -103,7 +103,6 @@ export interface ConfigOverrides {
   transport?: string;
   httpPort?: number;
   httpHost?: string;
-  toolsets?: string;
   logLevel?: string;
   telemetryBuffer?: number;
   telemetryNetwork?: boolean;
@@ -307,8 +306,6 @@ export function loadConfig(overrides: ConfigOverrides = {}, env = process.env): 
   const rawLogLevel = overrides.logLevel ?? env.KNAP_LOG_LEVEL ?? env.LOG_LEVEL ?? "info";
   const logLevel: LogLevel = isLogLevel(rawLogLevel) ? rawLogLevel : "info";
 
-  const { enabled, unknown } = parseToolsets(overrides.toolsets ?? env.KNAP_TOOLSETS);
-
   const vault = overrides.vault ?? env.OBSIDIAN_VAULT;
   const targetMatch = overrides.targetMatch ?? env.OBSIDIAN_TARGET_MATCH;
 
@@ -330,8 +327,8 @@ export function loadConfig(overrides: ConfigOverrides = {}, env = process.env): 
     transport,
     httpPort: overrides.httpPort ?? numberFrom(env.MCP_PORT, 9223),
     httpHost: overrides.httpHost ?? env.MCP_HOST ?? "127.0.0.1",
-    enabledToolsets: enabled,
-    unknownToolsets: unknown,
+    enabledToolsets: new Set(DEFAULT_TOOLSETS),
+    unknownToolsets: [],
     logLevel,
     telemetryBuffer: overrides.telemetryBuffer ?? numberFrom(env.KNAP_TELEMETRY_BUFFER, 2000),
     telemetryNetwork: overrides.telemetryNetwork ?? boolFrom(env.KNAP_TELEMETRY_NETWORK, false),

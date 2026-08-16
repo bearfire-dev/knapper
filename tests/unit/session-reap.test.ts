@@ -218,7 +218,7 @@ describe("reapStaleSessions", () => {
     // number". The fixture points at this very test runner: alive, but not an
     // Obsidian and not in this session's scope, so it must not count as live.
     // (The genuine live case needs a real instance and is covered by
-    // scripts/sessions-live.mjs, which asserts one session survives another's
+    // scripts/workspaces-live.ts, which asserts one session survives another's
     // restart.)
     await makeSession("reused-a3f19c22", {
       heartbeatAgeMs: STALE_AFTER_MS + 60_000,

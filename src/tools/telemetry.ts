@@ -47,6 +47,10 @@ export function registerTelemetryTools(ctx: ServerContext): void {
       level: logLevelSchema.optional().describe("Exact log level filter"),
       minLevel: logLevelSchema.optional().describe("Minimum severity (e.g. warn → warn and error)"),
       plugin: z.string().optional().describe("Only records attributed to this plugin id"),
+      windowId: z
+        .string()
+        .optional()
+        .describe("Only records emitted by this main window or popout window id"),
       pattern: z
         .string()
         .optional()
@@ -80,6 +84,7 @@ export function registerTelemetryTools(ctx: ServerContext): void {
         level: args.level as LogLevel | undefined,
         minLevel: args.minLevel as LogLevel | undefined,
         plugin: args.plugin as string | undefined,
+        windowId: args.windowId as string | undefined,
         pattern: args.pattern as string | undefined,
         source: args.source as RecordSource | undefined,
         withinMs: args.withinMs as number | undefined,
@@ -87,7 +92,7 @@ export function registerTelemetryTools(ctx: ServerContext): void {
       });
 
       const note = !availability.playwright
-        ? `Telemetry unavailable: ${CDP_REMEDIATION} Fix with obsidian_launch.`
+        ? `Telemetry unavailable: ${CDP_REMEDIATION} Fix with obsidian_open.`
         : !armed
           ? "Capture could not attach to any Obsidian window."
           : undefined;
@@ -202,7 +207,7 @@ export function registerTelemetryTools(ctx: ServerContext): void {
       ];
 
       if (!availability.playwright) {
-        lines.push("", CDP_REMEDIATION, "Fix with obsidian_launch.");
+        lines.push("", CDP_REMEDIATION, "Fix with obsidian_open.");
       }
 
       return {

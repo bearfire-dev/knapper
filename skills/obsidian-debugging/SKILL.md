@@ -1,79 +1,21 @@
 ---
 name: obsidian-debugging
-description: "Debug Obsidian plugins with knapper telemetry: cursor-based obsidian_logs tailing, obsidian_log_mark brackets, console and network capture, and error attribution from stack frames. Use after reloads, UI exercises, or mysterious plugin onload failures."
+description: Read Knapper logs with cursors and window attribution after plugin or UI actions.
 ---
 
-# Obsidian debugging with telemetry
+# Obsidian debugging
 
-Telemetry tools need an active Knapper session and a live Obsidian window. Knapper
-selects the active target for every telemetry call. CDP provides capture hooks.
+Open the target with `obsidian_open` before you debug a plugin.
 
-## The core primitive: cursor tailing
+## Capture a scenario
 
-`obsidian_logs` returns a **cursor** (opaque position in the ring buffer). Pass it back as **`since`** on the next call to receive **only events that arrived after that point**.
+1. Call `obsidian_logs` and save its cursor.
+2. Perform one plugin or UI action.
+3. Call `obsidian_logs` with the saved cursor as `since`.
 
-This is the reliable answer to: _“What happened because of what I just did?”_
+`obsidian_logs` returns console messages, page errors, failed requests, and
+plugin errors. Each event includes its `windowId`, so main-window and popout
+events remain distinct.
 
-### Pattern
-
-```text
-obsidian_log_mark(label="before-reload")
-obsidian_plugin_reload(id="my-plugin")
-# … reproduce issue …
-obsidian_logs(since=<cursor from mark or prior logs call>)
-```
-
-1. Note cursor **before** the action (from `obsidian_log_mark` or a prior `obsidian_logs`).
-2. Perform the action (reload, command, UI click).
-3. Fetch logs with `since` set to that cursor.
-
-Without `since`, you get the tail of the buffer — fine for orientation, poor for causality.
-
-## Marks: `obsidian_log_mark`
-
-Inserts a labeled divider in the telemetry stream. Returns a cursor you can pass to `obsidian_logs(since=…)`.
-
-Use labels that match your experiment: `after-enable`, `click-settings-tab`, `dev-cycle-start`.
-
-## What you get
-
-Depending on filters, `obsidian_logs` includes:
-
-- **Console** — `log`, `warn`, `error`, …
-- **Errors** — uncaught exceptions with stacks
-- **Network** — when capture is enabled (useful for plugin fetches)
-
-`obsidian_telemetry_status` reports buffer size, capture state, and high-level counters — call when logs look empty suspiciously.
-
-## Plugin attribution
-
-Stack frames and message heuristics attribute errors to a **plugin id** when possible. After `obsidian_dev_cycle` or `obsidian_plugin_health`, prefer the structured JSON payload’s attribution fields over hand-parsing text.
-
-When attribution is missing:
-
-- Confirm the plugin id matches the folder under `.obsidian/plugins/`.
-- Check whether the error originates in Obsidian core or another plugin.
-
-## Clearing noise
-
-`obsidian_logs_clear` wipes the buffer (use on dev vaults when the ring is full of old noise). Follow with a fresh mark before the next experiment.
-
-## Combine with dev tools
-
-| Symptom                       | Next step                                                     |
-| ----------------------------- | ------------------------------------------------------------- |
-| Reload threw                  | `obsidian_logs(since=…)` right after `obsidian_plugin_reload` |
-| Command did nothing           | `obsidian_exercise_command` (includes before/after + logs)    |
-| UI wrong but no console error | `browser_snapshot` + screenshot; check DOM hooks skill        |
-| Settings not sticking         | `obsidian_plugin_settings` readback vs `obsidian_eval`        |
-
-## CLI vs CDP for debugging
-
-- **CLI** can run `dev:*` style introspection when enabled, but live console streaming is tied to CDP capture.
-- Both transports can be active simultaneously (verified) — router picks the right layer per tool.
-
-## Related skills
-
-- **obsidian-plugin-dev** — `obsidian_dev_cycle` embeds marks and log diffing.
-- **obsidian-instance-setup** — fix `CDP_PORT_CLOSED` before expecting telemetry.
-- **obsidian-ui-automation** — reproduce UI bugs with snapshot-first steps.
+Use `obsidian_eval` for main-renderer probes. Pass `windowId` to inspect popout
+DOM. Popouts do not expose the main renderer's `app` object.

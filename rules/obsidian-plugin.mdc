@@ -11,39 +11,29 @@ alwaysApply: false
 
 ## Dev loop
 
-- Open one private target with `obsidian_session_open` before plugin work.
-- Use the active session implicitly. Do not pass caller-owned session identifiers.
-- Run one operation at a time. If Knapper returns `KNAPPER_BUSY`, wait for
-  `retryAfterMs` and check `obsidian_status`.
-- Build on the host (`npm run build`); the MCP server does not compile TypeScript.
-- Link into a dev vault with `obsidian_link_plugin` (symlink), never copy artifacts manually each time.
-- Verify with `obsidian_dev_cycle` after changes; read attributed errors from the response or `obsidian_logs(since=…)`.
-- Prefer `obsidian_command` / `obsidian_exercise_command` over browser menu automation.
+- Open one private target with `obsidian_open` before plugin work.
+- Pass an absolute `vaultPath` and optional `pluginDir`.
+- Build on the host. Knapper does not compile TypeScript.
+- Verify changes with `obsidian_dev_cycle`.
+- Read errors with `obsidian_logs(since=…)`.
+- Call `obsidian_close` after testing.
 
-## API vs DOM
+## API and DOM
 
-- Read vault and workspace state with `obsidian_eval` (`app.vault`, `app.workspace`, `app.plugins`).
-- The file tree is virtualized — do not scrape `.nav-file-title` for full file lists.
-- UI work: `browser_snapshot` then pass refs as **`target`** to `browser_click` / `browser_type`.
+- Read main-window plugin state with `obsidian_eval` and the Obsidian `app` object.
+- Pass `windowId` to inspect DOM state in a popout.
+- Call `obsidian_snapshot` before browser input.
+- Pass snapshot refs as `target`.
+- Recreate refs after you change `windowId`.
 
-## CLI extension
+## Commands and dialogs
 
-- `Plugin.prototype.registerCliHandler` is supported; completions are introspected live in `obsidian_commands`.
-- Duplicate CLI ids throw at registration — names must be unique.
+- Use `obsidian_commands` to list command IDs.
+- Use `obsidian_command` to test a command.
+- Queue prompt responses with `browser_handle_dialog` before the action. Alert and confirm dialogs are not supported. Knapper dismisses them.
 
 ## Safety
 
-- Use a scratch dev vault for `obsidian_reset_state` and destructive tests.
-- Keep the private profile and `XDG_RUNTIME_DIR` isolation intact.
-- Use `obsidian_session_release` after testing. It releases the agent claim and
-  keeps the private app ready for reuse. Reset moves verified roots to recoverable
-  trash and never hard-deletes them.
-- Run `obsidian_doctor` when transports fail; quit Obsidian fully before expecting CDP after adding `--remote-debugging-port`.
-
-## Tool discovery
-
-- Core: status, doctor, launch, eval, cli, commands.
-- Plugin-dev: reload, manifest, settings, dev_cycle, exercise_command.
-- Telemetry: logs with cursor `since`, log_mark.
-- UI: `browser_*` (requires CDP).
-- The MCP tool list is fixed during initialization. Do not change it during a connection.
+- Use a scratch development vault for destructive tests.
+- The MCP surface contains exactly 20 tools.
+- Do not use tool flags, toolsets, or a full mode.

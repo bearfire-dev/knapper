@@ -20,6 +20,7 @@ import { getCompletions } from "../obsidian/completions.js";
 import { launchWithCdp } from "./provisioning.js";
 import { listPluginCommandIds } from "../devcycle/plugin-health.js";
 import { renderResult } from "../util/serialize.js";
+import { readDescriptor } from "../session/descriptor.js";
 
 export function pluginListContains(value: unknown, stdout: string, id: string): boolean {
   const visit = (entry: unknown): boolean => {
@@ -46,9 +47,7 @@ export function registerObsidianTools(ctx: ServerContext): void {
     toolset: "core",
     capability: "cliCommand",
     description:
-      "List CLI commands from live `__completions` introspection (enabled core plugins and dev " +
-      "handlers). Prefer over guessing command names. Use obsidian_cli to run one. " +
-      CLOSED_VAULT_WARNING,
+      "List native CLI commands and command-palette IDs from the linked development plugin.",
     annotations: { readOnlyHint: true },
     inputSchema: {
       filter: z.string().optional().describe("Substring filter on command name"),
@@ -64,12 +63,29 @@ export function registerObsidianTools(ctx: ServerContext): void {
         filter !== undefined && filter !== ""
           ? names.filter((n) => n.toLowerCase().includes(filter))
           : names;
-      const text = filtered.map((n) => `${n}: ${map[n]?.description ?? ""}`).join("\n");
+      const descriptor =
+        ctx.currentSessionKey === undefined
+          ? undefined
+          : await readDescriptor(ctx.currentSessionKey);
+      const pluginId = descriptor?.plugin?.id;
+      const pluginCommands =
+        pluginId === undefined
+          ? []
+          : (await listPluginCommandIds(router, pluginId, config.vault)).filter(
+              (id) => filter === undefined || filter === "" || id.toLowerCase().includes(filter),
+            );
+      const nativeText = filtered
+        .map((name) => `${name}: ${map[name]?.description ?? ""}`)
+        .join("\n");
+      const pluginText =
+        pluginId === undefined
+          ? "No development plugin is linked."
+          : pluginCommands.join("\n") || `No command-palette IDs found for ${pluginId}.`;
       return {
-        text: text === "" ? "No commands match." : text,
+        text: `Native CLI commands:\n${nativeText || "No commands match."}\n\nPlugin commands:\n${pluginText}`,
         json: {
-          count: filtered.length,
-          commands: filtered.map((n) => ({ name: n, ...map[n] })),
+          native: filtered.map((name) => ({ name, ...map[name] })),
+          plugin: { id: pluginId ?? null, commands: pluginCommands },
         },
       };
     },
@@ -137,14 +153,13 @@ export function registerObsidianTools(ctx: ServerContext): void {
       CLOSED_VAULT_WARNING,
     inputSchema: {
       id: z.string().describe("Command palette id"),
-      vault: z.string().optional().describe("Target vault"),
     },
     annotations: { readOnlyHint: false, destructiveHint: true },
     handler: async (args) => {
       const { stdout } = await runCli(router, {
         command: "command",
         args: [`id=${args.id as string}`],
-        vault: vaultName(args, config),
+        vault: config.vault,
       });
       return contentOutcome(stdout, "Command executed");
     },

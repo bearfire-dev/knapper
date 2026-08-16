@@ -62,39 +62,35 @@ Four manifests describe the same plugin and **must be updated together**:
 
 ```bash
 npm run check      # oxfmt + oxlint (pinned vite-plus; no global install needed)
-npm run typecheck  # tsc --noEmit
+npm run typecheck  # strict TypeScript 7 check with tsgo
 npm test           # vitest unit tests
-npm run build      # tsc -> dist/
+npm run build      # tsgo -> dist/
 npm run smoke      # degraded-mode MCP check, no Obsidian required
 ```
 
-Live suites create a temporary `KNAP_HOME`, a private Obsidian profile, a scratch
-vault, and a dynamic CDP port. They must never use the default profile or a caller
-vault. The harness proves that each selected vault is disposable before it writes
-notes.
+The live contract creates a temporary `KNAP_HOME`, one private Obsidian profile,
+and a Git-ignored development vault. It uses a dynamic CDP port. It never uses the
+default profile.
 
 ```bash
-npm run acceptance  # 23 checks over the critical seams
-npm run e2e         # 79 checks: vault round-trips, UI, telemetry, dev cycle, errors
+npm run acceptance  # fixed surface, CLI, UI, popouts, prompts, telemetry, errors
+npm run e2e         # alias for the same fixed live contract
 ```
 
 ```bash
-npm run fence      # live checks for authorized and unauthorized private windows
-npm run bg-input   # 6 live checks: background input without desktop focus theft
-npm run workspaces # isolated instances, reconnect, scoped restart, quarantine
+npm run fence      # alias for the fixed live contract
+npm run bg-input   # alias for the fixed live contract
+npm run workspaces # alias for the fixed live contract
 ```
 
-Each live suite provisions one private session and tears it down. Run `npm run
-workspaces` for changes to `src/session/`, `launch.ts`, the activity guard, or
-process-scoping predicates.
+Each live command provisions one private profile and tears it down.
 
 `npm run check && npm run typecheck && npm test && npm run acceptance` is the
 minimum before proposing a change. Run `npm run e2e` for anything touching the
 router, a tool handler, or the CLI argv grammar.
 
-`npm run fence` creates separate authorized and unauthorized private windows when
-the platform supports them. `npm run bg-input` is only meaningful when Obsidian is
-not the foreground window. Run it without clicking the private Obsidian window.
+The contract verifies the exact selected vault, main and popout routing, window
+attribution in logs, and real input.
 
 ## Conventions that matter
 
@@ -132,7 +128,7 @@ registered is not consent. `obsidian_link_plugin` and `obsidian_setup_vault` bot
 this: they wrote into `<vault>/.obsidian` of any vault Obsidian happened to know
 about, including the user's own. `obsidian_setup_vault` was worse for being fenced
 only _by accident_ — a `plugins:restrict` call happened to run first and throw, so
-reordering two lines would have reopened it. `fence-live.mjs` now asserts both
+reordering two lines would have reopened it. `fence-live.ts` now asserts both
 refuse. The two remaining `findVault` callers are deliberate: `vaultAutomationState`
 is read-only diagnostics that must be able to inspect an unauthorized vault to
 explain the refusal, and `obsidian_remove_vault` is guarded by
@@ -197,11 +193,9 @@ second copy. Bump both together.
 - Delegate independent workstreams to parallel subagents with **strict file
   ownership**, since they share one working tree. Overlapping edits corrupt each
   other. Follow implementation with an audit subagent that runs `npm run check`.
-- Open one isolated session with `obsidian_session_open`. Operational tools use the
-  active target and do not accept caller-owned handles.
+- Open one private profile with `obsidian_open`. Operational tools use the active
+  target and do not accept caller-owned handles.
 - On `KNAPPER_BUSY`, inspect `obsidian_status` and retry after the reported activity
   window or after the current owner releases the session.
-- `npm run bg-input` stays serialized regardless: it depends on Obsidian not being the
-  foreground window, which is one global property of the desktop, and it fails open.
 - Use mermaid flowcharts to explain architecture in plans.
 - Build the big shapes first, then refine. Be specific and precise.

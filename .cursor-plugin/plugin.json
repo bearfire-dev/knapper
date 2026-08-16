@@ -1,7 +1,7 @@
 {
   "name": "knapper",
-  "version": "0.7.0-beta.1",
-  "description": "MCP server for stateless Obsidian plugin development with one managed session, browser automation, and debugging.",
+  "version": "0.7.0",
+  "description": "MCP server for Obsidian plugin development with one private vault, popout-aware UI automation, and logs.",
   "author": {
     "name": "slate-rehm",
     "url": "https://github.com/slate-rehm"
@@ -12,15 +12,15 @@
   "keywords": ["obsidian", "mcp", "plugin-development", "playwright", "cdp", "automation"],
   "interface": {
     "displayName": "Knapper",
-    "shortDescription": "Develop and test Obsidian plugins in one managed session.",
-    "longDescription": "Drive one live Obsidian desktop session through MCP. Build and reload plugins, automate settings and other UI, and inspect console errors.",
+    "shortDescription": "Develop and test one Obsidian plugin in one private vault.",
+    "longDescription": "Open a Git-ignored vault, link one plugin, reload it, drive Obsidian windows, and read logs and eval results.",
     "developerName": "Bearfire",
     "category": "Developer Tools",
     "capabilities": ["Obsidian automation", "Plugin development", "UI testing"],
     "defaultPrompt": [
-      "Open an isolated Obsidian session and test this plugin.",
-      "Reload this Obsidian plugin and check for new errors.",
-      "Exercise this plugin's settings through the live UI."
+      "Open a Git-ignored Obsidian vault for this plugin.",
+      "Reload this plugin and check its logs.",
+      "Exercise this plugin in the Obsidian UI."
     ]
   }
 }

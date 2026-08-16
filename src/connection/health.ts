@@ -278,8 +278,8 @@ export async function probeHealth(opts: ProbeOptions): Promise<HealthReport> {
     problems.push({
       state: "not-running",
       message: "Obsidian is not running.",
-      remediation: "Launch it with the debug port so both transports are available.",
-      fixedBy: "obsidian_launch",
+      remediation: "Open the private development target again.",
+      fixedBy: "obsidian_open",
     });
   }
 
@@ -287,11 +287,8 @@ export async function probeHealth(opts: ProbeOptions): Promise<HealthReport> {
     problems.push({
       state: "cli-disabled",
       message: "Obsidian's command line interface is disabled.",
-      remediation:
-        "This gates the majority of the Obsidian tools. It cannot be enabled through the CLI " +
-        "itself, so either let this server flip it over the CDP connection or toggle it in " +
-        "Settings > General > Advanced.",
-      fixedBy: "obsidian_setup_cli",
+      remediation: "Open the private development target again so Knapper can enable its CLI.",
+      fixedBy: "obsidian_open",
     });
   }
 
@@ -303,7 +300,7 @@ export async function probeHealth(opts: ProbeOptions): Promise<HealthReport> {
         "Browser automation, ARIA snapshots, and live telemetry need this. Because of Electron's " +
         "single-instance lock, Obsidian must be fully quit and cold-started with " +
         "`--remote-debugging-port` — adding the flag to a running instance does nothing.",
-      fixedBy: "obsidian_launch",
+      fixedBy: "obsidian_open",
     });
   }
 

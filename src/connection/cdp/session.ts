@@ -53,6 +53,7 @@ export interface ResolvedPage {
 
 export interface SafeWindowSummary {
   targetId: string;
+  windowId: string;
   kind: "main" | "popout";
   authorized: boolean;
   title?: string;
@@ -65,7 +66,12 @@ export function safeWindowSummary(
   window: Omit<ResolvedPage, "page"> & { targetId: string },
   authorized: boolean,
 ): SafeWindowSummary {
-  const base = { targetId: window.targetId, kind: window.kind, authorized };
+  const base = {
+    targetId: window.targetId,
+    windowId: window.targetId,
+    kind: window.kind,
+    authorized,
+  };
   if (!authorized) return base;
   return {
     ...base,
@@ -85,6 +91,8 @@ export class PlaywrightSession {
    * once and demoted to debug afterwards.
    */
   private warnedTargetMatchMiss = false;
+  private readonly windowIds = new WeakMap<Page, string>();
+  private readonly dialogPages = new WeakSet<Page>();
 
   constructor(private readonly opts: PlaywrightSessionOptions) {}
 
@@ -184,9 +192,47 @@ export class PlaywrightSession {
         url,
         ...(parsed.vaultName !== undefined ? { vaultName: parsed.vaultName } : {}),
       });
+      this.dismissDialogs(page);
     }
 
     return out;
+  }
+
+  /** A target id is stable for the lifetime of an Obsidian window. */
+  async windowIdFor(page: Page): Promise<string | undefined> {
+    const cached = this.windowIds.get(page);
+    if (cached !== undefined) return cached;
+    const windowId = await this.targetIdFor(page);
+    if (windowId !== undefined) this.windowIds.set(page, windowId);
+    return windowId;
+  }
+
+  async pageForWindowId(windowId: string, requestedVault?: string): Promise<Page> {
+    const windows = await this.windows();
+    for (const window of windows) {
+      if ((await this.windowIdFor(window.page)) !== windowId) continue;
+      const vaultName = await this.vaultOfWindow(window);
+      if (vaultName === undefined || !(await this.opts.isVaultAuthorized(vaultName))) break;
+      if (requestedVault !== undefined && vaultName.toLowerCase() !== requestedVault.toLowerCase())
+        break;
+      return window.page;
+    }
+    throw new UobError(
+      "TARGET_NOT_FOUND",
+      `No authorized Obsidian window has windowId ${windowId}.`,
+      {
+        remediation: "Inspect obsidian_status and use a current windowId.",
+        fixedBy: "obsidian_status",
+      },
+    );
+  }
+
+  private dismissDialogs(page: Page): void {
+    if (this.dialogPages.has(page)) return;
+    this.dialogPages.add(page);
+    page.on("dialog", (dialog) => {
+      void dialog.dismiss().catch(() => undefined);
+    });
   }
 
   /**
@@ -261,7 +307,8 @@ export class PlaywrightSession {
    * window, then whatever is left", which meant a `vault` that matched nothing
    * silently drove someone else's notes.
    */
-  async page(requestedVault?: string): Promise<Page> {
+  async page(requestedVault?: string, windowId?: string): Promise<Page> {
+    if (windowId !== undefined) return this.pageForWindowId(windowId, requestedVault);
     const windows = await this.windows();
     if (windows.length === 0) {
       throw appUnavailable();
@@ -275,11 +322,8 @@ export class PlaywrightSession {
         const vaultName = await this.vaultOfWindow(w);
         if (vaultName === undefined || !(await this.opts.isVaultAuthorized(vaultName))) {
           throw new UobError("VAULT_NOT_AUTHORIZED", "The pinned window is not authorized.", {
-            remediation:
-              "The window switched vaults after it was pinned, or was never authorized. Attach " +
-              "to an authorized window instead; knapper re-checks the pin on every call rather " +
-              "than trusting it.",
-            fixedBy: "obsidian_list_targets",
+            remediation: "Inspect obsidian_status and take a fresh obsidian_snapshot.",
+            fixedBy: "obsidian_status",
             details: { pinnedTargetId: this.pinnedTargetId },
           });
         }
@@ -289,8 +333,8 @@ export class PlaywrightSession {
         "TARGET_NOT_FOUND",
         `Pinned target ${this.pinnedTargetId} is no longer present.`,
         {
-          remediation: "List targets and attach again; the window was probably closed.",
-          fixedBy: "obsidian_list_targets",
+          remediation: "Inspect obsidian_status. The window was probably closed.",
+          fixedBy: "obsidian_status",
         },
       );
     }
@@ -307,10 +351,8 @@ export class PlaywrightSession {
         "TARGET_NOT_FOUND",
         `No open Obsidian window is showing the authorized vault "${wanted}".`,
         {
-          remediation:
-            "Open that vault in Obsidian, or name a different authorized vault. knapper will not " +
-            "fall back to another window — that is how automation ends up driving the wrong vault.",
-          fixedBy: "obsidian_list_targets",
+          remediation: "Call obsidian_close, then open the development vault again.",
+          fixedBy: "obsidian_open",
           details: { vault: wanted, openWindows: windows.length },
         },
       );
@@ -417,9 +459,9 @@ export class PlaywrightSession {
   }
 
   /** Evaluate an expression in the renderer, verifying `window.app` first. */
-  async evaluate<T>(expression: string, vault?: string): Promise<T> {
-    const page = await this.page(vault);
-    if (!(await this.hasApp(page))) throw appUnavailable();
+  async evaluate<T>(expression: string, vault?: string, windowId?: string): Promise<T> {
+    const page = await this.page(vault, windowId);
+    if (windowId === undefined && !(await this.hasApp(page))) throw appUnavailable();
 
     try {
       // Async wrapper so bare top-level `await` works: Playwright unwraps a

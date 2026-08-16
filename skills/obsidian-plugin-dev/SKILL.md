@@ -1,151 +1,34 @@
 ---
 name: obsidian-plugin-dev
-description: Build, link, reload, and verify Obsidian plugins against a live desktop app using knapper. Use when developing or testing community plugins, symlinking build output, running obsidian_dev_cycle, reading attributed console errors, or exercising plugin commands and CLI handlers.
+description: Build, reload, and verify one Obsidian plugin with Knapper.
 ---
 
 # Obsidian plugin development loop
 
-Knapper publishes the core, session, telemetry, plugin, UI, editor, and vault tools
-during MCP initialization. Do not change the tool list after startup. Operational
-tools use the active session and accept no caller-owned session identifiers.
+Knapper loads one development plugin in one private Obsidian profile.
 
-For plugin work, open a private session with `pluginSourceDir` and
-`pluginId`. If `visualIdentity.state` is `degraded`, read `visualIdentity.warnings`
-array. This warning does not disable the private-session routing.
+## Loop
 
-## Mental model
+1. Build the plugin on disk.
+2. Call `obsidian_open` with the vault path and `pluginDir`.
+3. Call `obsidian_dev_cycle` after each build.
+4. Read the health verdict and attributed errors from the result.
+5. Call `obsidian_logs` to inspect new errors.
+6. Call `obsidian_close` after testing.
 
-Obsidian plugin work is a tight loop:
+Use `obsidian_commands` to list command IDs. Use `obsidian_command` to run one.
 
-1. **Link** your build directory into the vault’s `.obsidian/plugins/<id>` folder.
-2. **Build** TypeScript (or your bundler) on the host.
-3. **Reload** the plugin in the live app.
-4. **Verify** with telemetry (console/errors) and optional UI checks.
+## Telemetry
 
-The composite tool `obsidian_dev_cycle` runs steps 3–4 in one call after you have built locally.
+Call `obsidian_logs` before a reload or UI action. Pass its cursor as `since` to
+the next `obsidian_logs` call. Logs include console output, page errors, failed
+requests, and plugin errors from the main window and popouts.
 
-## One-time session setup
+## UI and evaluation
 
-For a dedicated development session:
+Call `obsidian_snapshot` before input. Pass a snapshot ref
+as `target`. Pass `windowId` when you work in a popout. Recreate refs after you
+change windows.
 
-1. Call `obsidian_session_open` with the loadable plugin directory and ID.
-2. Check `obsidian_plugin_health` before you modify plugin state.
-
-### `obsidian_link_plugin`
-
-- **vault** — registered vault name (must appear in Obsidian’s vault list).
-- **sourceDir** — absolute path to a loadable directory with `manifest.json` and `main.js`.
-- **pluginId** — optional; defaults to `manifest.json` → `id`.
-- **unlink** — remove the symlink only (refuses to delete a real directory).
-
-After linking, enable the plugin once in Obsidian if it is not already enabled (`obsidian_plugin_enable`).
-
-## The fast path: `obsidian_dev_cycle`
-
-Call after every code change you want to validate:
-
-```text
-obsidian_dev_cycle(pluginId="my-plugin", openPath="Notes/Smoke.md", waitMs=1500)
-```
-
-What it does:
-
-1. Inserts a telemetry mark (baseline for logs).
-2. Reloads the plugin via CLI (`obsidian_plugin_reload` behavior).
-3. Optionally opens a note.
-4. Waits for the UI to settle.
-5. Optionally saves a screenshot under the configured output root.
-6. Returns console output since the mark and attributes applicable errors to the plugin.
-
-Screenshot results contain `path`, `mimeType`, `size`, and `inline: false`. They do
-not contain inline base64 data.
-
-**Side effects:** reload wipes in-memory plugin state; treat this as intentional during dev.
-
-## Manual loop (when you need finer control)
-
-| Step             | Tool                       | Notes                                    |
-| ---------------- | -------------------------- | ---------------------------------------- |
-| Build on disk    | (your `npm run build`)     | MCP does not compile for you             |
-| Reload           | `obsidian_plugin_reload`   | `id` = plugin folder name                |
-| Inspect metadata | `obsidian_plugin_manifest` | Live manifest + enabled state            |
-| Settings         | `obsidian_plugin_settings` | Read/write `data.json` in memory         |
-| List plugins     | `obsidian_plugin_list`     | `filter=community` during dev            |
-| Health check     | `obsidian_plugin_health`   | Enabled, loaded, commands, recent errors |
-
-## Reading failures: `obsidian_logs`
-
-After reload or exercising UI:
-
-1. Call `obsidian_logs` — note the returned **cursor**.
-2. Reproduce the bug.
-3. Call `obsidian_logs` again with `since=<cursor>` to fetch only new events.
-
-See **obsidian-debugging** for marks, attribution, and network events.
-
-## Exercising commands
-
-Prefer commands over menu automation:
-
-1. `obsidian_plugin_commands` or `obsidian_commands` with a filter — discover ids.
-2. `obsidian_exercise_command` — runs a palette command by id, waits, returns workspace delta + new logs.
-3. Or `obsidian_command` for a simple CLI-fired execution.
-
-## Plugin CLI handlers (`registerCliHandler`)
-
-Plugins can expose Obsidian CLI commands via `Plugin.prototype.registerCliHandler`:
-
-- Descriptions are **auto-prefixed** with the plugin name in completions.
-- **Duplicate command ids throw** at registration time.
-- The server **does not hardcode** plugin CLI tables — `obsidian_commands` introspects live `__completions`, so new handlers show up automatically after reload.
-
-To test a handler: find its name in `obsidian_commands`, then run it with `obsidian_cli` (raw CLI) or the documented flags for that command.
-
-## Probe globals and editor checks
-
-Expose a probe function from your plugin during development. Return plain data, not class instances:
-
-```javascript
-// in the plugin's onload
-window.myPluginProbe = async () => ({ settings: this.settings, widgetCount: this.widgets.length });
-```
-
-Run it through `obsidian_eval`:
-
-```text
-obsidian_eval code=JSON.stringify(await window.myPluginProbe())
-```
-
-Keep the call on one line. The Playwright transport awaits the promise for you. Also mirror the result to the console as an overflow channel — a large payload then stays readable through `obsidian_logs`:
-
-```text
-obsidian_eval code=(async () => { const r = await window.myPluginProbe(); console.log("probe:", JSON.stringify(r)); return JSON.stringify(r); })()
-```
-
-For editor-rendering plugins, pair the probe with the editor toolset:
-
-- `obsidian_editor_state` — file, mode, cursor, and a `docHash` of the document.
-- `obsidian_editor_widgets selector=[data-my-plugin]` — verify your decorations actually rendered, with rects and document positions.
-- `obsidian_editor_replace` — drive hash-guarded text edits to trigger your extension, then re-run the probe.
-
-## Clean slate testing
-
-`obsidian_reset_state` disables the plugin, resets `data.json` to `{}`, re-enables, and returns the previous settings JSON so you can restore them. Destructive — use only on dev vaults.
-
-Do not call `obsidian_create_vault` for a private session. Use the scratch vault
-from `obsidian_session_open`.
-
-## Checklist for a new plugin repo
-
-1. `obsidian_session_open` — create scratch space and link the loadable build.
-2. `obsidian_plugin_health` — confirm present, enabled, and loaded state.
-3. `obsidian_plugin_enable` if needed.
-4. Iterate: **build → `obsidian_dev_cycle`**.
-5. Use `obsidian_exercise_command` for command-centric features.
-6. Call `obsidian_session_release` after testing.
-
-## Related skills
-
-- **obsidian-instance-setup** — transports, launch, vault registry.
-- **obsidian-ui-automation** — snapshot-first UI when commands are not enough.
-- **obsidian-debugging** — cursor tailing and log marks.
+`obsidian_eval` runs in the main renderer and can access `app`. With `windowId`,
+it evaluates DOM code in a popout.

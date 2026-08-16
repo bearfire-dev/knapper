@@ -26,6 +26,7 @@ const { readDescriptor, writeDescriptor, SESSION_SCHEMA_VERSION } =
   await import("../../src/session/descriptor.js");
 const { quarantineSession, releaseSession, stopSession } =
   await import("../../src/session/registry.js");
+const { sessionBootId } = await import("../../src/session/ownership.js");
 const { sessionPaths } = await import("../../src/config.js");
 
 let home: string;
@@ -113,10 +114,10 @@ describe("two-phase workspace lifecycle", () => {
   it("refuses to release or quarantine a live instance and never quits it", async () => {
     findPids.mockResolvedValue([1234]);
     await expect(releaseSession(key, { env })).rejects.toMatchObject({
-      fixedBy: "obsidian_session_reset",
+      fixedBy: "obsidian_close",
     });
     await expect(quarantineSession(key, { env })).rejects.toMatchObject({
-      fixedBy: "obsidian_session_reset",
+      fixedBy: "obsidian_close",
     });
     expect(quit).not.toHaveBeenCalled();
     expect(await readDescriptor(key, env)).toBeDefined();
@@ -137,4 +138,53 @@ describe("two-phase workspace lifecycle", () => {
     expect(await stat(join(result.quarantinedPath!, key, "Keep.md"))).toBeTruthy();
     await expect(stat(sessionPaths(key, env).root)).rejects.toMatchObject({ code: "ENOENT" });
   });
+
+  it.each(["rootDevice", "vaultDevice"] as const)(
+    "refuses quarantine when the saved %s differs",
+    async (field) => {
+      const descriptor = (await readDescriptor(key, env))!;
+      const ownership = descriptor.ownership!;
+      await writeDescriptor(
+        {
+          ...descriptor,
+          ownership: {
+            ...ownership,
+            [field]: ownership[field] + 1,
+            bootId: await sessionBootId(),
+          },
+        },
+        env,
+      );
+
+      await expect(quarantineSession(key, { env })).rejects.toMatchObject({
+        code: "VAULT_NOT_MANAGED",
+      });
+      expect(await stat(join(sessionPaths(key, env).vaultDir, "Keep.md"))).toBeTruthy();
+      expect(await readDescriptor(key, env)).toBeDefined();
+    },
+  );
+
+  it.skipIf(process.platform !== "linux")(
+    "renews device identity across a reboot before quarantine",
+    async () => {
+      const descriptor = (await readDescriptor(key, env))!;
+      const ownership = descriptor.ownership!;
+      await writeDescriptor(
+        {
+          ...descriptor,
+          ownership: {
+            ...ownership,
+            rootDevice: ownership.rootDevice + 1,
+            vaultDevice: ownership.vaultDevice + 1,
+            bootId: "00000000-0000-0000-0000-000000000000",
+          },
+        },
+        env,
+      );
+
+      const result = await quarantineSession(key, { env });
+      expect(await stat(join(result.quarantinedPath!, key, "Keep.md"))).toBeTruthy();
+      await expect(stat(sessionPaths(key, env).root)).rejects.toMatchObject({ code: "ENOENT" });
+    },
+  );
 });

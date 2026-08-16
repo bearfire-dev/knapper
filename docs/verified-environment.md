@@ -1,7 +1,7 @@
 # Verified environment facts
 
 Measured against a live instance rather than assumed. Re-run
-`node scripts/spike-gates.mjs` (with Obsidian launched on `--remote-debugging-port=9222`)
+`npx tsx scripts/spike-gates.ts` (with Obsidian launched on `--remote-debugging-port=9222`)
 before trusting any of this on a new Obsidian or Electron major version.
 
 | Component         | Version                                              |

@@ -20,7 +20,7 @@ permissions:
 
 env:
   # Obsidian is a desktop app and cannot run on a CI runner, so the live suites
-  # (scripts/acceptance.mjs, scripts/e2e.mjs) are deliberately not part of CI.
+  # (scripts/acceptance.ts, scripts/e2e.ts) are deliberately not part of CI.
   # Everything here must pass without a running Obsidian.
   CI: "true"
 
@@ -51,7 +51,7 @@ jobs:
         run: npm run check
 
       - name: Typecheck
-        run: npx tsc --noEmit
+        run: npm run typecheck
 
       - name: Unit tests
         run: npm test
@@ -61,7 +61,7 @@ jobs:
 
       - name: Manifest versions agree with package.json
         if: matrix.node == '22'
-        run: node scripts/sync-version.mjs --check
+        run: npm run versions:check
 
   package:
     name: package & install
@@ -138,7 +138,7 @@ jobs:
           # contract: the server must still start, hand back a tool list, and
           # answer obsidian_status with a diagnosis rather than crashing.
           cd /tmp/install-test
-          node "$GITHUB_WORKSPACE/scripts/ci-smoke.mjs" \
+          "$GITHUB_WORKSPACE/node_modules/.bin/tsx" "$GITHUB_WORKSPACE/scripts/ci-smoke.ts" \
             node_modules/knapper/dist/cli.js
 
       - uses: actions/upload-artifact@v7

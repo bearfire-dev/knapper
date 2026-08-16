@@ -137,8 +137,8 @@ export function contextForPage(context: BrowserContext, page?: Page): BrowserCon
             "Knapper does not allow the browser backend to create a new page.",
             {
               remediation:
-                "Open the window in Obsidian, then select an authorized target from obsidian_list_targets.",
-              fixedBy: "obsidian_list_targets",
+                "Open the popout in Obsidian, then get its windowId from obsidian_status.",
+              fixedBy: "obsidian_status",
             },
           );
         };
@@ -168,6 +168,7 @@ export function contextForPage(context: BrowserContext, page?: Page): BrowserCon
 }
 
 const FALLBACK_PROPERTIES = {
+  windowId: { type: "string" },
   target: { type: "string" },
   element: { type: "string" },
   text: { type: "string" },
@@ -295,7 +296,13 @@ export class BrowserProxy {
       .map((t) => ({
         name: t.name,
         ...(t.description !== undefined ? { description: t.description } : {}),
-        inputSchema: t.inputSchema as Record<string, unknown>,
+        inputSchema: {
+          ...(t.inputSchema as Record<string, unknown>),
+          properties: {
+            ...(t.inputSchema as { properties?: Record<string, unknown> }).properties,
+            windowId: { type: "string", description: "Window id from a snapshot." },
+          },
+        },
         ...(t.outputSchema !== undefined
           ? { outputSchema: t.outputSchema as Record<string, unknown> }
           : {}),
@@ -356,8 +363,8 @@ export class BrowserProxy {
   /**
    * Bind upstream to `page` and no other page.
    *
-   * Returns false rather than throwing so `obsidian_attach` can report partial
-   * success, but `callTool` treats false as a refusal. Forwarding any operation to
+   * Returns false rather than throwing so status can report partial success, but
+   * `callTool` treats false as a refusal. Forwarding any operation to
    * whatever tab the proxy happened to latch onto is the failure mode this exists
    * to prevent.
    */
@@ -385,8 +392,7 @@ export class BrowserProxy {
 
       // Re-resolve after the asynchronous rebuild. This detects a closed window,
       // a changed pin, or a vault switch before any proxied operation can run.
-      const verifiedPage = await this.router.playwright.page();
-      const verifiedTargetId = await this.router.playwright.targetIdFor(verifiedPage);
+      const verifiedTargetId = await this.router.playwright.targetIdFor(page);
       if (verifiedTargetId !== targetId || !(await this.router.playwright.isPageAuthorized(page))) {
         await created.client.close().catch(() => undefined);
         this.client = undefined;
@@ -435,7 +441,7 @@ export class BrowserProxy {
           remediation:
             "Obsidian must be fully quit and cold-started with `--remote-debugging-port`. Electron's " +
             "single-instance lock means adding the flag to a running instance silently does nothing.",
-          fixedBy: "obsidian_launch",
+          fixedBy: "obsidian_open",
         },
       );
     }
@@ -450,7 +456,7 @@ export class BrowserProxy {
           remediation: "Pass a Playwright key name or chord, such as Escape or Control+p.",
         });
       }
-      const page = await this.router.playwright.page();
+      const page = await this.router.playwright.page(undefined, windowIdFromArgs(args));
       await this.router.focus.run(page, () => page.keyboard.press(key));
       return { content: [{ type: "text", text: `Pressed ${key}.` }] };
     }
@@ -462,7 +468,7 @@ export class BrowserProxy {
         `Browser automation is unavailable: no CDP endpoint at ${this.config.cdpUrl}.`,
         {
           remediation: "Cold-start Obsidian with the debug port, then retry the same browser tool.",
-          fixedBy: "obsidian_launch",
+          fixedBy: "obsidian_open",
           details: { tool: name },
         },
       );
@@ -474,17 +480,16 @@ export class BrowserProxy {
      * shared BrowserContext and otherwise keeps independent current-tab state.
      */
     const call = async (): Promise<CallToolResult> => {
-      const page = await this.router.playwright.page();
+      const page = await this.router.playwright.page(undefined, windowIdFromArgs(args));
       if (!(await this.pointProxyAt(page))) {
         throw new UobError(
           "TARGET_NOT_FOUND",
           `Refusing to run ${name}: could not point the browser proxy at the authorized window.`,
           {
             remediation:
-              "The window may have closed or switched vaults. Take a fresh " +
-              "browser_snapshot and retry. knapper will not forward a browser call without first " +
+              "The window may have closed. Take a fresh obsidian_snapshot and retry. Knapper will not forward a browser call without first " +
               "confirming which window will receive it.",
-            fixedBy: "obsidian_list_targets",
+            fixedBy: "obsidian_snapshot",
             details: { tool: name },
           },
         );
@@ -496,13 +501,22 @@ export class BrowserProxy {
           arguments:
             name === "browser_take_screenshot"
               ? Object.fromEntries(
-                  Object.entries(stripUndefined(args)).filter(([key]) => key !== "filename"),
+                  Object.entries(stripUndefined(withoutRoutingArgs(args))).filter(
+                    ([key]) => key !== "filename",
+                  ),
                 )
-              : stripUndefined(args),
+              : stripUndefined(withoutRoutingArgs(args)),
         }) as Promise<CallToolResult>;
 
       if (!isInputBrowserTool(name)) {
-        const result = await forward();
+        let result = await forward();
+        if (name === "browser_snapshot") {
+          const windowId =
+            typeof this.router.playwright.windowIdFor === "function"
+              ? await this.router.playwright.windowIdFor(page)
+              : undefined;
+          result = scopeSnapshotRefs(result, windowId);
+        }
         if (name !== "browser_take_screenshot" || result.isError) return result;
         const image = result.content.find((part) => part.type === "image");
         if (image?.type !== "image") {
@@ -545,7 +559,7 @@ export class BrowserProxy {
         throw new UobError("CDP_PORT_CLOSED", `Lost the Obsidian window while calling ${name}.`, {
           remediation:
             "Obsidian was closed or restarted. Relaunch it with the debug port, then retry.",
-          fixedBy: "obsidian_launch",
+          fixedBy: "obsidian_open",
         });
       }
       try {
@@ -557,9 +571,9 @@ export class BrowserProxy {
           `${name} could not reach an Obsidian window after reconnecting.`,
           {
             remediation:
-              "Take a fresh browser_snapshot — refs from before the reconnect are stale. If the " +
-              "window is gone, list targets and attach again.",
-            fixedBy: "obsidian_list_targets",
+              "Take a fresh obsidian_snapshot because refs from before the reconnect are stale. " +
+              "Use obsidian_status if the window is gone.",
+            fixedBy: "obsidian_snapshot",
             details: { tool: name, upstream: retryMessage.slice(0, 400) },
           },
         );
@@ -608,4 +622,32 @@ function stripUndefined(args: Record<string, unknown>): Record<string, unknown> 
     if (value !== undefined) out[key] = value;
   }
   return out;
+}
+
+function windowIdFromArgs(args: Record<string, unknown>): string | undefined {
+  if (typeof args.windowId === "string" && args.windowId !== "") return args.windowId;
+  if (typeof args.target !== "string") return undefined;
+  return /^([^:]+):e\d+$/.exec(args.target)?.[1];
+}
+
+function withoutRoutingArgs(args: Record<string, unknown>): Record<string, unknown> {
+  const out = { ...args };
+  delete out.windowId;
+  if (typeof out.target === "string") {
+    const match = /^([^:]+):(e\d+)$/.exec(out.target);
+    if (match) out.target = match[2];
+  }
+  return out;
+}
+
+function scopeSnapshotRefs(result: CallToolResult, windowId: string | undefined): CallToolResult {
+  if (windowId === undefined) return result;
+  return {
+    ...result,
+    content: result.content.map((part) =>
+      part.type === "text"
+        ? { ...part, text: part.text.replace(/\[ref=(e\d+)\]/g, `[ref=${windowId}:$1]`) }
+        : part,
+    ),
+  };
 }

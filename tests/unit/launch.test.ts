@@ -123,7 +123,7 @@ describe("launchObsidian process observation", () => {
       }),
     ).rejects.toMatchObject({
       code: "OBSIDIAN_LAUNCH_FAILED",
-      fixedBy: "obsidian_launch",
+      fixedBy: "obsidian_open",
       details: expect.objectContaining({
         signal: "SIGSEGV",
         stderrTail: "fatal startup detail",

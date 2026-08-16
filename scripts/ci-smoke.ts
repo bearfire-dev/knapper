@@ -10,13 +10,39 @@
  * That last point is a regression guard: an attached CDP websocket previously kept
  * the event loop alive and the process lingered after every session.
  *
- *   node scripts/ci-smoke.mjs [path/to/cli.js]
+ *   npx tsx scripts/ci-smoke.ts [path/to/cli.js]
  */
 
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { rm } from "node:fs/promises";
+
+type RpcValue = string | number | boolean | null | RpcObject | RpcValue[];
+interface RpcObject {
+  [key: string]: RpcValue | undefined;
+}
+interface RpcContent {
+  type?: string;
+  text?: string;
+}
+interface RpcTool {
+  name: string;
+  description?: string;
+  annotations?: { readOnlyHint?: boolean };
+}
+interface RpcResult {
+  serverInfo?: { name?: string; version?: string };
+  tools?: RpcTool[];
+  content?: RpcContent[];
+  isError?: boolean;
+}
+interface RpcResponse {
+  id?: number;
+  method?: string;
+  result?: RpcResult;
+  error?: { message: string };
+}
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const entry = process.argv[2] ?? join(root, "dist", "cli.js");
@@ -26,7 +52,7 @@ await rm(knapHome, { recursive: true, force: true });
 /** A port nothing can be listening on, so attach must fail fast. */
 const DEAD_CDP = "http://127.0.0.1:1";
 let failed = 0;
-function check(label, condition, detail = "") {
+function check(label: string, condition: boolean, detail = ""): void {
   if (condition) {
     console.log(`  PASS  ${label}${detail ? ` (${detail})` : ""}`);
   } else {
@@ -35,9 +61,14 @@ function check(label, condition, detail = "") {
   }
 }
 
-const child = spawn("node", [entry, "--cdp-url", DEAD_CDP], {
+const child = spawn("node", [entry], {
   stdio: ["pipe", "pipe", "pipe"],
-  env: { ...process.env, OBSIDIAN_BIN: "/nonexistent/obsidian", KNAP_HOME: knapHome },
+  env: {
+    ...process.env,
+    OBSIDIAN_BIN: "/nonexistent/obsidian",
+    OBSIDIAN_CDP_URL: DEAD_CDP,
+    KNAP_HOME: knapHome,
+  },
 });
 
 let stderr = "";
@@ -45,8 +76,8 @@ child.stderr.on("data", (c) => {
   stderr += c.toString();
 });
 
-const pending = new Map();
-const notifications = [];
+const pending = new Map<number, (message: RpcResponse) => void>();
+const notifications: string[] = [];
 let buffer = "";
 child.stdout.on("data", (chunk) => {
   buffer += chunk.toString();
@@ -55,27 +86,27 @@ child.stdout.on("data", (chunk) => {
     const line = buffer.slice(0, index).trim();
     buffer = buffer.slice(index + 1);
     if (line === "") continue;
-    let message;
+    let message: RpcResponse;
     try {
-      message = JSON.parse(line);
+      message = JSON.parse(line) as RpcResponse;
     } catch {
       continue;
     }
     if (typeof message.method === "string" && message.id === undefined) {
       notifications.push(message.method);
     }
-    const resolve = pending.get(message.id);
+    const resolve = message.id === undefined ? undefined : pending.get(message.id);
     if (resolve) {
-      pending.delete(message.id);
+      pending.delete(message.id as number);
       resolve(message);
     }
   }
 });
 
 let nextId = 1;
-function send(method, params) {
+function send(method: string, params: RpcObject = {}): Promise<RpcResponse> {
   const id = nextId++;
-  const promise = new Promise((resolve, reject) => {
+  const promise = new Promise<RpcResponse>((resolve, reject) => {
     // Clear the guard on settle. An outstanding timer keeps the Node event loop
     // alive, which would otherwise stall this script for the full timeout after
     // its last successful call.
@@ -111,22 +142,34 @@ try {
   const listed = await send("tools/list");
   const tools = listed.result?.tools ?? [];
   const names = new Set(tools.map((tool) => tool.name));
-  check("startup surface contains operational tools", tools.length > 60, `${tools.length} tools`);
-  for (const required of [
+  const expected = [
+    "obsidian_open",
     "obsidian_status",
-    "obsidian_doctor",
-    "obsidian_capabilities",
-    "obsidian_session_open",
-    "obsidian_session_status",
-    "obsidian_session_release",
-    "obsidian_session_reset",
-    "browser_snapshot",
-    "browser_click",
-    "obsidian_plugin_health",
+    "obsidian_close",
     "obsidian_dev_cycle",
-  ]) {
+    "obsidian_commands",
+    "obsidian_command",
+    "obsidian_eval",
+    "obsidian_cli",
+    "obsidian_logs",
+    "obsidian_snapshot",
+    "browser_click",
+    "browser_type",
+    "browser_press_key",
+    "browser_hover",
+    "browser_drag",
+    "browser_take_screenshot",
+    "browser_handle_dialog",
+    "browser_mouse_wheel",
+    "browser_keydown",
+    "browser_keyup",
+  ];
+  check("startup surface is fixed at 20 tools", tools.length === 20, `${tools.length} tools`);
+  for (const required of expected) {
     check(`${required} is registered`, names.has(required));
   }
+  const unexpected = [...names].filter((name) => !expected.includes(name));
+  check("startup surface contains no extra tools", unexpected.length === 0, unexpected.join(", "));
   check("no duplicate tool names", names.size === tools.length);
   check(
     "every tool carries a description",
@@ -137,15 +180,18 @@ try {
     tools.every((t) => typeof t.annotations?.readOnlyHint === "boolean"),
   );
 
-  check("legacy dynamic tool update is absent", !names.has("obsidian_toolsets_update"));
-  check("legacy agent handles are absent", !names.has("obsidian_agent_open"));
-  check("legacy workspace handles are absent", !names.has("obsidian_workspace_claim_default"));
-
-  const session = await send("tools/call", {
-    name: "obsidian_session_status",
-    arguments: {},
-  });
-  check("session status answers without a handle", session.result?.isError !== true);
+  for (const removed of [
+    "obsidian_toolsets",
+    "obsidian_tool_catalog",
+    "obsidian_session_open",
+    "obsidian_session_status",
+    "obsidian_session_release",
+    "obsidian_session_reset",
+    "obsidian_list_targets",
+    "obsidian_attach",
+  ]) {
+    check(`${removed} is absent`, !names.has(removed));
+  }
 
   const status = await send("tools/call", {
     name: "obsidian_status",
@@ -160,20 +206,6 @@ try {
     "status diagnoses the missing instance",
     /not running|no|unavailable|disabled/i.test(statusText),
     statusText.split("\n")[0]?.slice(0, 60),
-  );
-
-  const doctor = await send("tools/call", {
-    name: "obsidian_doctor",
-    arguments: {},
-  });
-  const doctorText = (doctor.result?.content ?? [])
-    .filter((c) => c.type === "text")
-    .map((c) => c.text)
-    .join("\n");
-  check("obsidian_doctor answers while offline", doctor.result?.isError !== true);
-  check(
-    "offline doctor reports the unavailable automation transport",
-    /not running|stopped|CDP reachable: no/i.test(doctorText),
   );
 
   // A tool that genuinely needs the app must fail as a clean, actionable MCP
@@ -198,14 +230,14 @@ try {
     .map((c) => c.text)
     .join("\n");
   check("browser calls fail cleanly without CDP", clicked.result?.isError === true);
-  check("browser failure points to session setup", /obsidian_session_open/i.test(clickText));
+  check("browser failure points to target setup", /obsidian_open/i.test(clickText));
 
   check(
     "static surface emits no list_changed notification",
     !notifications.includes("notifications/tools/list_changed"),
   );
-} catch (e) {
-  check(`smoke sequence completed`, false, e.message);
+} catch (e: unknown) {
+  check(`smoke sequence completed`, false, e instanceof Error ? e.message : String(e));
 }
 
 // Closing stdin is how an MCP client signals shutdown.
