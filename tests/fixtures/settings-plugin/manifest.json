@@ -4,6 +4,6 @@
   "version": "1.0.0",
   "minAppVersion": "1.8.0",
   "description": "Live settings UI fixture for Knapper.",
-  "author": "bearfire-dev",
+  "author": "paperkeel",
   "isDesktopOnly": true
 }

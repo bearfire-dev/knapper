@@ -11,7 +11,7 @@ one development vault and, when requested, one development plugin.
 Install Knapper from a release or run it from a checkout:
 
 ```bash
-npx -y github:bearfire-dev/knapper
+npx -y github:paperkeel/knapper
 ```
 
 The server needs Node.js 20 or later and Obsidian 1.12 or later. Linux is the

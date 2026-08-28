@@ -3,8 +3,8 @@
   "name": "knapper",
   "description": "MCP server for Obsidian plugin development with one private vault, popout-aware UI automation, and logs.",
   "owner": {
-    "name": "bearfire-dev",
-    "url": "https://github.com/bearfire-dev"
+    "name": "paperkeel",
+    "url": "https://github.com/paperkeel"
   },
   "plugins": [
     {

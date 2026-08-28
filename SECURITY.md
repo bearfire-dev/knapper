@@ -114,5 +114,5 @@ contain tool arguments. Review them before you publish a recording or bug report
 
 ## Report a vulnerability
 
-Open a [security advisory](https://github.com/bearfire-dev/knapper/security/advisories/new).
+Open a [security advisory](https://github.com/paperkeel/knapper/security/advisories/new).
 Use a regular issue only when the report does not contain sensitive information.
