@@ -32,12 +32,12 @@ else (`".."`, `"../.."`) points outside the repo and fails to resolve.
 
 | Host                     | Reads                                                            | Discovers bundle from             | Install                                                                                                      |
 | ------------------------ | ---------------------------------------------------------------- | --------------------------------- | ------------------------------------------------------------------------------------------------------------ |
-| **Claude Code**          | `.claude-plugin/marketplace.json` → `.claude-plugin/plugin.json` | `skills/`, `commands/`, `agents/` | `claude plugin marketplace add bearfire-dev/knapper` then `claude plugin install knapper@knapper`            |
+| **Claude Code**          | `.claude-plugin/marketplace.json` → `.claude-plugin/plugin.json` | `skills/`, `commands/`, `agents/` | `claude plugin marketplace add paperkeel/knapper` then `claude plugin install knapper@knapper`               |
 | **Cursor**               | `.cursor-plugin/plugin.json`, `rules/*.mdc`, `.mcp.json`         | `skills/`, `rules/`               | MCP: `.mcp.json` at project root or **Settings → MCP**. Bundle: clone into `~/.cursor/plugins/local/knapper` |
-| **Codex**                | `.codex-plugin/plugin.json`                                      | `skills/`, `commands/`, `agents/` | `codex plugin marketplace add bearfire-dev/knapper` then `codex plugin add knapper@knapper`                  |
-| **OpenCode**             | `opencode.json`                                                  | `.agents/skills/`                 | Add the local MCP configuration below. Install skills with `npx skills add bearfire-dev/knapper`             |
-| **skills.sh**            | `skills/*/SKILL.md`                                              | `skills/` only                    | `npx skills add bearfire-dev/knapper`                                                                        |
-| **Any MCP client**       | —                                                                | n/a (server only)                 | `command: "knapper"`, or `npx -y github:bearfire-dev/knapper`                                                |
+| **Codex**                | `.codex-plugin/plugin.json`                                      | `skills/`, `commands/`, `agents/` | `codex plugin marketplace add paperkeel/knapper` then `codex plugin add knapper@knapper`                     |
+| **OpenCode**             | `opencode.json`                                                  | `.agents/skills/`                 | Add the local MCP configuration below. Install skills with `npx skills add paperkeel/knapper`                |
+| **skills.sh**            | `skills/*/SKILL.md`                                              | `skills/` only                    | `npx skills add paperkeel/knapper`                                                                           |
+| **Any MCP client**       | —                                                                | n/a (server only)                 | `command: "knapper"`, or `npx -y github:paperkeel/knapper`                                                   |
 | **`.agents` convention** | `.agents/plugins/marketplace.json`                               | `skills/`, `commands/`, `agents/` | Host-dependent                                                                                               |
 
 ## OpenCode MCP configuration
@@ -67,7 +67,7 @@ tools. Knapper does not support toolsets or a full mode.
 Use this command array to track the default branch:
 
 ```json
-"command": ["npx", "-y", "github:bearfire-dev/knapper"]
+"command": ["npx", "-y", "github:paperkeel/knapper"]
 ```
 
 The `knap` binary remains a compatibility alias. New configurations must use
@@ -92,7 +92,7 @@ The bundle is loaded correctly when the host can see all four skills. A quick ch
 not require Obsidian:
 
 ```bash
-npx -y github:bearfire-dev/knapper --help    # server starts
+npx -y github:paperkeel/knapper --help    # server starts
 npm run smoke                              # fixed 20-tool MCP contract
 ```
 

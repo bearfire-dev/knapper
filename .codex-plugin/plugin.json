@@ -6,8 +6,8 @@
     "name": "slate-rehm",
     "url": "https://github.com/slate-rehm"
   },
-  "homepage": "https://github.com/bearfire-dev/knapper#readme",
-  "repository": "https://github.com/bearfire-dev/knapper",
+  "homepage": "https://github.com/paperkeel/knapper#readme",
+  "repository": "https://github.com/paperkeel/knapper",
   "license": "MIT",
   "keywords": ["obsidian", "mcp", "plugin-development", "playwright", "cdp", "automation"],
   "interface": {
